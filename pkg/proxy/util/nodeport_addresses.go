@@ -30,6 +30,7 @@ type NodePortAddresses struct {
 
 	cidrs                []*net.IPNet
 	containsIPv4Loopback bool
+	containsIPv6Loopback bool
 	matchAll             bool
 }
 
@@ -65,6 +66,10 @@ func NewNodePortAddresses(family v1.IPFamily, cidrStrings []string) *NodePortAdd
 		if netutils.IsIPv4CIDR(cidr) {
 			if cidr.IP.IsLoopback() || cidr.Contains(ipv4LoopbackStart) {
 				npa.containsIPv4Loopback = true
+			}
+		} else {
+			if cidr.IP.IsLoopback() || cidr.Contains(net.IPv6loopback) {
+				npa.containsIPv6Loopback = true
 			}
 		}
 
@@ -131,4 +136,10 @@ func (npa *NodePortAddresses) GetNodeIPs(nw NetworkInterfacer) ([]net.IP, error)
 // ContainsIPv4Loopback returns true if npa's CIDRs contain an IPv4 loopback address.
 func (npa *NodePortAddresses) ContainsIPv4Loopback() bool {
 	return npa.containsIPv4Loopback
+}
+
+// ContainsLoopback returns true if npa's CIDRs contain a loopback address
+// for the family that npa was created with.
+func (npa *NodePortAddresses) ContainsLoopback() bool {
+	return npa.containsIPv4Loopback || npa.containsIPv6Loopback
 }

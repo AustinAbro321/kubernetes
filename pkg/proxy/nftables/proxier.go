@@ -43,6 +43,7 @@ import (
 	"k8s.io/kubernetes/pkg/proxy"
 	"k8s.io/kubernetes/pkg/proxy/conntrack"
 	"k8s.io/kubernetes/pkg/proxy/healthcheck"
+	"k8s.io/kubernetes/pkg/proxy/localnodeportproxy"
 	"k8s.io/kubernetes/pkg/proxy/metaproxier"
 	"k8s.io/kubernetes/pkg/proxy/metrics"
 	"k8s.io/kubernetes/pkg/proxy/runner"
@@ -198,6 +199,10 @@ type Proxier struct {
 	noEndpointNodePorts *nftElementStorage
 	serviceNodePorts    *nftElementStorage
 	hairpinConnections  *nftElementStorage
+
+	// localhostNodePortProxy handles userspace proxying of NodePorts on localhost
+	// when kernel-space proxying is not possible (e.g. no route_localnet).
+	localhostNodePortProxy *localnodeportproxy.LocalNodePortProxy
 }
 
 // Proxier implements proxy.Provider
@@ -270,6 +275,8 @@ func NewProxier(ctx context.Context,
 		serviceNodePorts:    newNFTElementStorage("map", serviceNodePortsMap),
 		hairpinConnections:  newNFTElementStorage("set", hairpinConnectionsSet),
 	}
+
+	proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ipFamily, logger)
 
 	logger.V(2).Info("NFTables sync params", "minSyncPeriod", minSyncPeriod, "syncPeriod", syncPeriod, "maxSyncPeriod", proxyutil.FullSyncPeriod)
 	// We need to pass *some* maxInterval to NewBoundedFrequencyRunner. time.Hour is arbitrary.
@@ -540,7 +547,6 @@ func (proxier *Proxier) setupNFTables(tx *knftables.Transaction) {
 		}
 		for _, ip := range nodeIPs {
 			if ip.IsLoopback() {
-				proxier.logger.Error(nil, "--nodeport-addresses includes localhost but localhost NodePorts are not supported", "address", ip.String())
 				continue
 			}
 			tx.Add(&knftables.Element{
@@ -1757,6 +1763,43 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	if err := proxier.serviceHealthServer.SyncEndpoints(proxier.endpointsMap.LocalReadyEndpoints()); err != nil {
 		proxier.logger.Error(err, "Error syncing healthcheck endpoints")
 	}
+
+	// Sync localhost NodePort proxies. nftables cannot handle localhost
+	// NodePort traffic in kernel space (no route_localnet equivalent), so
+	// a userspace proxy on loopback is always needed.
+	desiredNodePorts := make(map[string]*localnodeportproxy.NodePortSpec)
+	for svcName, svc := range proxier.svcPortMap {
+		svcInfo, ok := svc.(*servicePortInfo)
+		if !ok {
+			continue
+		}
+		if svcInfo.NodePort() == 0 {
+			continue
+		}
+		allEndpoints := proxier.endpointsMap[svcName]
+		clusterEndpoints, localEndpoints, _, hasEndpoints := proxy.CategorizeEndpoints(
+			allEndpoints, svcInfo, proxier.nodeName, proxier.topologyLabels)
+		if !hasEndpoints {
+			continue
+		}
+		// Use same endpoint selection as kernel-space external traffic.
+		endpoints := clusterEndpoints
+		if svcInfo.ExternalPolicyLocal() {
+			endpoints = localEndpoints
+		}
+		if len(endpoints) == 0 {
+			continue
+		}
+		protocol := strings.ToLower(string(svcInfo.Protocol()))
+		key := fmt.Sprintf("%s/%d", protocol, svcInfo.NodePort())
+		desiredNodePorts[key] = &localnodeportproxy.NodePortSpec{
+			ServicePortName: svcName,
+			Protocol:        svcInfo.Protocol(),
+			Port:            svcInfo.NodePort(),
+			Endpoints:       endpoints,
+		}
+	}
+	proxier.localhostNodePortProxy.SyncNodePorts(desiredNodePorts)
 
 	if endpointUpdateResult.ConntrackCleanupRequired {
 		// Finish housekeeping, clear stale conntrack entries for UDP Services
