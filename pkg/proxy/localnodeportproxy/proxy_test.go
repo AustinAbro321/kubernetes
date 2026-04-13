@@ -510,6 +510,223 @@ func TestNoEndpoints(t *testing.T) {
 	}
 }
 
+// startPortReportingServer starts a TCP server that sends its own port number
+// to each connecting client.
+func startPortReportingServer(t *testing.T, network string) (net.Listener, int, proxy.Endpoint) {
+	t.Helper()
+	addr := "127.0.0.1:0"
+	if network == "tcp6" {
+		addr = "[::1]:0"
+	}
+	l, err := net.Listen(network, addr)
+	if err != nil {
+		t.Fatalf("Failed to start backend: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				fmt.Fprintf(c, "port:%d", port)
+			}(conn)
+		}
+	}()
+	ip := "127.0.0.1"
+	if network == "tcp6" {
+		ip = "::1"
+	}
+	return l, port, &testEndpoint{ip: ip, port: port}
+}
+
+func readBackendID(t *testing.T, network, addr string) string {
+	t.Helper()
+	conn, err := net.DialTimeout(network, addr, 2*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	buf, err := io.ReadAll(conn)
+	conn.Close()
+	if err != nil {
+		t.Fatalf("Failed to read: %v", err)
+	}
+	return string(buf)
+}
+
+func TestSessionAffinity_PinsToSingleEndpoint(t *testing.T) {
+	logger, _ := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+	defer p.Shutdown()
+
+	// Start 3 backends; each reports its own port
+	var backends []net.Listener
+	var endpoints []proxy.Endpoint
+	for range 3 {
+		b, _, ep := startPortReportingServer(t, "tcp4")
+		backends = append(backends, b)
+		endpoints = append(endpoints, ep)
+	}
+	defer func() {
+		for _, b := range backends {
+			b.Close()
+		}
+	}()
+
+	fl, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodePort := fl.Addr().(*net.TCPAddr).Port
+	fl.Close()
+
+	key := fmt.Sprintf("tcp/%d", nodePort)
+	p.SyncNodePorts(map[string]*NodePortSpec{
+		key: {
+			ServicePortName:     makeServicePortName("default", "sticky-svc", "http"),
+			Protocol:            v1.ProtocolTCP,
+			Port:                nodePort,
+			Endpoints:           endpoints,
+			SessionAffinityType: v1.ServiceAffinityClientIP,
+			StickyMaxAgeSeconds: 10800,
+		},
+	})
+
+	addr := fmt.Sprintf("127.0.0.1:%d", nodePort)
+	first := readBackendID(t, "tcp4", addr)
+	for range 10 {
+		got := readBackendID(t, "tcp4", addr)
+		if got != first {
+			t.Fatalf("SessionAffinity ClientIP: expected all requests to hit %q, got %q", first, got)
+		}
+	}
+}
+
+func TestSessionAffinity_PinnedEndpointRemoved(t *testing.T) {
+	logger, _ := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+	defer p.Shutdown()
+
+	b1, _, ep1 := startPortReportingServer(t, "tcp4")
+	defer b1.Close()
+	b2, _, ep2 := startPortReportingServer(t, "tcp4")
+	defer b2.Close()
+
+	fl, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodePort := fl.Addr().(*net.TCPAddr).Port
+	fl.Close()
+
+	key := fmt.Sprintf("tcp/%d", nodePort)
+	svcName := makeServicePortName("default", "sticky-svc", "http")
+	p.SyncNodePorts(map[string]*NodePortSpec{
+		key: {
+			ServicePortName:     svcName,
+			Protocol:            v1.ProtocolTCP,
+			Port:                nodePort,
+			Endpoints:           []proxy.Endpoint{ep1, ep2},
+			SessionAffinityType: v1.ServiceAffinityClientIP,
+			StickyMaxAgeSeconds: 10800,
+		},
+	})
+
+	addr := fmt.Sprintf("127.0.0.1:%d", nodePort)
+	pinned := readBackendID(t, "tcp4", addr)
+
+	// Drop the pinned endpoint from the set; remaining traffic must flow to
+	// the surviving endpoint rather than silently dropping.
+	remaining := ep2
+	if pinned == fmt.Sprintf("port:%d", ep2.(*testEndpoint).port) {
+		remaining = ep1
+	}
+	p.SyncNodePorts(map[string]*NodePortSpec{
+		key: {
+			ServicePortName:     svcName,
+			Protocol:            v1.ProtocolTCP,
+			Port:                nodePort,
+			Endpoints:           []proxy.Endpoint{remaining},
+			SessionAffinityType: v1.ServiceAffinityClientIP,
+			StickyMaxAgeSeconds: 10800,
+		},
+	})
+
+	got := readBackendID(t, "tcp4", addr)
+	want := fmt.Sprintf("port:%d", remaining.(*testEndpoint).port)
+	if got != want {
+		t.Fatalf("After pinned endpoint removal: expected %q, got %q", want, got)
+	}
+}
+
+func TestSessionAffinity_Expires(t *testing.T) {
+	logger, _ := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+	defer p.Shutdown()
+
+	var backends []net.Listener
+	var endpoints []proxy.Endpoint
+	for range 3 {
+		b, _, ep := startPortReportingServer(t, "tcp4")
+		backends = append(backends, b)
+		endpoints = append(endpoints, ep)
+	}
+	defer func() {
+		for _, b := range backends {
+			b.Close()
+		}
+	}()
+
+	fl, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodePort := fl.Addr().(*net.TCPAddr).Port
+	fl.Close()
+
+	// StickyMaxAgeSeconds is in seconds; we can't use fractional values via the
+	// public spec, so poke the listener directly after construction.
+	key := fmt.Sprintf("tcp/%d", nodePort)
+	p.SyncNodePorts(map[string]*NodePortSpec{
+		key: {
+			ServicePortName:     makeServicePortName("default", "sticky-svc", "http"),
+			Protocol:            v1.ProtocolTCP,
+			Port:                nodePort,
+			Endpoints:           endpoints,
+			SessionAffinityType: v1.ServiceAffinityClientIP,
+			StickyMaxAgeSeconds: 10800,
+		},
+	})
+
+	p.mu.Lock()
+	p.active[key].mu.Lock()
+	p.active[key].affinityTimeout = 50 * time.Millisecond
+	p.active[key].mu.Unlock()
+	p.mu.Unlock()
+
+	addr := fmt.Sprintf("127.0.0.1:%d", nodePort)
+	first := readBackendID(t, "tcp4", addr)
+	// Within the window, stays pinned.
+	if got := readBackendID(t, "tcp4", addr); got != first {
+		t.Fatalf("Before expiry: expected %q, got %q", first, got)
+	}
+	time.Sleep(100 * time.Millisecond)
+	// After expiry, round-robin may move us elsewhere. Repeat a few times to
+	// make it overwhelmingly likely we observe a different endpoint.
+	sawOther := false
+	for range 10 {
+		if got := readBackendID(t, "tcp4", addr); got != first {
+			sawOther = true
+			break
+		}
+	}
+	if !sawOther {
+		t.Fatalf("After expiry: never saw a different backend than %q", first)
+	}
+}
+
 func TestLargeDataTransfer(t *testing.T) {
 	logger, _ := ktesting.NewTestContext(t)
 	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)

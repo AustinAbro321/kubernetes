@@ -40,6 +40,22 @@ type NodePortSpec struct {
 	Protocol        v1.Protocol
 	Port            int
 	Endpoints       []proxy.Endpoint
+	// SessionAffinityType mirrors Service.spec.sessionAffinity. When set to
+	// ClientIP, consecutive connections from localhost are pinned to the same
+	// endpoint for StickyMaxAgeSeconds.
+	SessionAffinityType v1.ServiceAffinity
+	// StickyMaxAgeSeconds is the affinity timeout in seconds, used only when
+	// SessionAffinityType is ClientIP.
+	StickyMaxAgeSeconds int
+}
+
+// affinityTimeout returns the effective affinity window for the spec, or 0
+// when affinity is disabled.
+func (s *NodePortSpec) affinityTimeout() time.Duration {
+	if s.SessionAffinityType != v1.ServiceAffinityClientIP {
+		return 0
+	}
+	return time.Duration(s.StickyMaxAgeSeconds) * time.Second
 }
 
 // LocalNodePortProxy manages userspace L4 proxy listeners on localhost
@@ -90,7 +106,7 @@ func (p *LocalNodePortProxy) SyncNodePorts(desired map[string]*NodePortSpec) {
 	// Add or update
 	for key, spec := range desired {
 		if existing, ok := p.active[key]; ok {
-			existing.updateEndpoints(spec.Endpoints)
+			existing.update(spec)
 			continue
 		}
 		if spec.Protocol != v1.ProtocolTCP {
@@ -127,14 +143,15 @@ func (p *LocalNodePortProxy) newNodePortListener(key string, spec *NodePortSpec)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	l := &nodePortListener{
-		key:       key,
-		protocol:  spec.Protocol,
-		port:      spec.Port,
-		logger:    p.logger,
-		endpoints: spec.Endpoints,
-		listener:  listener,
-		cancel:    cancel,
-		network:   p.network,
+		key:             key,
+		protocol:        spec.Protocol,
+		port:            spec.Port,
+		logger:          p.logger,
+		endpoints:       spec.Endpoints,
+		affinityTimeout: spec.affinityTimeout(),
+		listener:        listener,
+		cancel:          cancel,
+		network:         p.network,
 	}
 	go l.acceptLoop(ctx)
 	return l, nil
@@ -147,9 +164,17 @@ type nodePortListener struct {
 	logger   klog.Logger
 	network  string // "tcp4" or "tcp6"
 
-	mu        sync.RWMutex
+	mu        sync.Mutex
 	endpoints []proxy.Endpoint
 	nextIndex int
+	// affinityTimeout is 0 when SessionAffinity is disabled; otherwise, it is
+	// the duration for which a picked endpoint stays pinned for localhost
+	// traffic. Since the source IP for all localhost traffic is 127.0.0.1 or
+	// ::1, ClientIP affinity effectively pins all traffic through this
+	// listener to a single endpoint until the pin goes stale.
+	affinityTimeout time.Duration
+	pinnedEndpoint  string // String() of the currently pinned endpoint, empty if none
+	pinnedLastUsed  time.Time
 
 	listener net.Listener
 	cancel   context.CancelFunc
@@ -211,17 +236,37 @@ func (l *nodePortListener) pickEndpoint() proxy.Endpoint {
 	if len(l.endpoints) == 0 {
 		return nil
 	}
+	now := time.Now()
+	if l.affinityTimeout > 0 && l.pinnedEndpoint != "" && now.Sub(l.pinnedLastUsed) <= l.affinityTimeout {
+		for _, ep := range l.endpoints {
+			if ep.String() == l.pinnedEndpoint {
+				l.pinnedLastUsed = now
+				return ep
+			}
+		}
+		// Pinned endpoint no longer in the set; fall through and pick a new one.
+	}
 	ep := l.endpoints[l.nextIndex%len(l.endpoints)]
 	l.nextIndex = (l.nextIndex + 1) % len(l.endpoints)
+	if l.affinityTimeout > 0 {
+		l.pinnedEndpoint = ep.String()
+		l.pinnedLastUsed = now
+	}
 	return ep
 }
 
-func (l *nodePortListener) updateEndpoints(endpoints []proxy.Endpoint) {
+func (l *nodePortListener) update(spec *NodePortSpec) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.endpoints = endpoints
-	if l.nextIndex >= len(endpoints) {
+	l.endpoints = spec.Endpoints
+	if l.nextIndex >= len(spec.Endpoints) {
 		l.nextIndex = 0
+	}
+	newTimeout := spec.affinityTimeout()
+	if l.affinityTimeout != newTimeout {
+		// Affinity config changed; drop any stale pin.
+		l.pinnedEndpoint = ""
+		l.affinityTimeout = newTimeout
 	}
 }
 

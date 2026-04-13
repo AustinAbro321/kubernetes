@@ -1793,10 +1793,12 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 		protocol := strings.ToLower(string(svcInfo.Protocol()))
 		key := fmt.Sprintf("%s/%d", protocol, svcInfo.NodePort())
 		desiredNodePorts[key] = &localnodeportproxy.NodePortSpec{
-			ServicePortName: svcName,
-			Protocol:        svcInfo.Protocol(),
-			Port:            svcInfo.NodePort(),
-			Endpoints:       endpoints,
+			ServicePortName:     svcName,
+			Protocol:            svcInfo.Protocol(),
+			Port:                svcInfo.NodePort(),
+			Endpoints:           endpoints,
+			SessionAffinityType: svcInfo.SessionAffinityType(),
+			StickyMaxAgeSeconds: svcInfo.StickyMaxAgeSeconds(),
 		}
 	}
 	proxier.localhostNodePortProxy.SyncNodePorts(desiredNodePorts)
