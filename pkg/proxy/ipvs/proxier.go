@@ -45,6 +45,7 @@ import (
 	"k8s.io/kubernetes/pkg/proxy/healthcheck"
 	utilipset "k8s.io/kubernetes/pkg/proxy/ipvs/ipset"
 	utilipvs "k8s.io/kubernetes/pkg/proxy/ipvs/util"
+	"k8s.io/kubernetes/pkg/proxy/localnodeportproxy"
 	"k8s.io/kubernetes/pkg/proxy/metaproxier"
 	"k8s.io/kubernetes/pkg/proxy/metrics"
 	"k8s.io/kubernetes/pkg/proxy/runner"
@@ -246,6 +247,11 @@ type Proxier struct {
 	lbNoNodeAccessIPPortProtocolEntries []*utilipset.Entry
 
 	logger klog.Logger
+
+	// localhostNodePortProxy handles userspace proxying of NodePorts on localhost.
+	// IPVS drops localhost-sourced traffic in the service chain, so a userspace
+	// proxy on loopback is needed for both IPv4 and IPv6.
+	localhostNodePortProxy *localnodeportproxy.LocalNodePortProxy
 }
 
 // Proxier implements proxy.Provider
@@ -393,6 +399,12 @@ func NewProxier(
 		gracefuldeleteManager: NewGracefulTerminationManager(ipvs),
 		logger:                logger,
 	}
+	// IPVS drops localhost-sourced traffic in the service chain, so use a
+	// userspace proxy to handle localhost NodePort traffic.
+	if nodePortAddresses.ContainsLoopback() {
+		proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ipFamily, logger)
+	}
+
 	// initialize ipsetList with all sets we needed
 	proxier.ipsetList = make(map[string]*IPSet)
 	for _, is := range ipsetInfo {
@@ -1261,6 +1273,45 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 
 	metrics.SyncProxyRulesNoLocalEndpointsTotal.WithLabelValues("internal", string(proxier.ipFamily)).Set(float64(proxier.serviceNoLocalEndpointsInternal.Len()))
 	metrics.SyncProxyRulesNoLocalEndpointsTotal.WithLabelValues("external", string(proxier.ipFamily)).Set(float64(proxier.serviceNoLocalEndpointsExternal.Len()))
+
+	// Sync localhost NodePort proxies. IPVS drops localhost-sourced traffic
+	// in the service chain, so a userspace proxy on loopback is needed.
+	if proxier.localhostNodePortProxy != nil {
+		desiredNodePorts := make(map[string]*localnodeportproxy.NodePortSpec)
+		for svcName, svc := range proxier.svcPortMap {
+			svcInfo, ok := svc.(*servicePortInfo)
+			if !ok {
+				continue
+			}
+			if svcInfo.NodePort() == 0 {
+				continue
+			}
+			allEndpoints := proxier.endpointsMap[svcName]
+			clusterEndpoints, localEndpoints, _, hasEndpoints := proxy.CategorizeEndpoints(
+				allEndpoints, svcInfo, proxier.nodeName, proxier.topologyLabels)
+			if !hasEndpoints {
+				continue
+			}
+			endpoints := clusterEndpoints
+			if svcInfo.ExternalPolicyLocal() {
+				endpoints = localEndpoints
+			}
+			if len(endpoints) == 0 {
+				continue
+			}
+			protocol := strings.ToLower(string(svcInfo.Protocol()))
+			key := fmt.Sprintf("%s/%d", protocol, svcInfo.NodePort())
+			desiredNodePorts[key] = &localnodeportproxy.NodePortSpec{
+				ServicePortName:     svcName,
+				Protocol:            svcInfo.Protocol(),
+				Port:                svcInfo.NodePort(),
+				Endpoints:           endpoints,
+				SessionAffinityType: svcInfo.SessionAffinityType(),
+				StickyMaxAgeSeconds: svcInfo.StickyMaxAgeSeconds(),
+			}
+		}
+		proxier.localhostNodePortProxy.SyncNodePorts(desiredNodePorts)
+	}
 
 	if endpointUpdateResult.ConntrackCleanupRequired {
 		// Finish housekeeping, clear stale conntrack entries for UDP Services

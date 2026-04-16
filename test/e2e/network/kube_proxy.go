@@ -420,15 +420,6 @@ var _ = common.SIGDescribe("KubeProxy", func() {
 		e2epod.SetNodeSelection(&hostExecPod.Spec, e2epod.NodeSelection{Name: nodeName})
 		e2epod.NewPodClient(fr).CreateSync(ctx, hostExecPod)
 
-		stdout, err := e2epodoutput.RunHostCmd(ns, hostExecPodName, fmt.Sprintf("curl --silent %s", loopbackURL(int32(ports.ProxyStatusPort), "/proxyMode")))
-		if err != nil {
-			framework.Failf("failed to get proxy mode: err: %v; stdout: %s", err, stdout)
-		}
-		proxyMode := strings.TrimSpace(stdout)
-		if proxyMode != string(config.ProxyModeNFTables) && proxyMode != string(config.ProxyModeIPTables) {
-			e2eskipper.Skipf("test requires nftables or iptables proxy mode, got %q", proxyMode)
-		}
-
 		ginkgo.By("creating backend pod")
 		label := map[string]string{"app": "agnhost-localhost-nodeport"}
 		httpPort := []v1.ContainerPort{{ContainerPort: 8080, Protocol: v1.ProtocolTCP}}
@@ -491,15 +482,6 @@ var _ = common.SIGDescribe("KubeProxy", func() {
 		hostExecPod := e2epod.NewExecPodSpec(ns, hostExecPodName, true)
 		e2epod.SetNodeSelection(&hostExecPod.Spec, e2epod.NodeSelection{Name: nodeName})
 		e2epod.NewPodClient(fr).CreateSync(ctx, hostExecPod)
-
-		stdout, err := e2epodoutput.RunHostCmd(ns, hostExecPodName, fmt.Sprintf("curl --silent %s", loopbackURL(int32(ports.ProxyStatusPort), "/proxyMode")))
-		if err != nil {
-			framework.Failf("failed to get proxy mode: err: %v; stdout: %s", err, stdout)
-		}
-		proxyMode := strings.TrimSpace(stdout)
-		if proxyMode != string(config.ProxyModeNFTables) && proxyMode != string(config.ProxyModeIPTables) {
-			e2eskipper.Skipf("test requires nftables or iptables proxy mode, got %q", proxyMode)
-		}
 
 		ginkgo.By("creating 3 backend pods pinned to the same node")
 		label := map[string]string{"app": "agnhost-sticky-localhost"}
