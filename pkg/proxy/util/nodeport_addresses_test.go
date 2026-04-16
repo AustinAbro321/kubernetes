@@ -21,7 +21,7 @@ import (
 	"net"
 	"testing"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	fake "k8s.io/kubernetes/pkg/proxy/util/testing"
 	netutils "k8s.io/utils/net"
@@ -398,6 +398,96 @@ func TestGetNodeIPs(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected mismatch for %s: %v", family, err)
 				}
+			}
+		})
+	}
+}
+
+func TestContainsLoopback(t *testing.T) {
+	tests := []struct {
+		name        string
+		family      v1.IPFamily
+		cidrStrings []string
+		want        bool
+	}{
+		{
+			name:        "IPv4 empty defaults to 0.0.0.0/0",
+			family:      v1.IPv4Protocol,
+			cidrStrings: []string{},
+			want:        true,
+		},
+		{
+			name:        "IPv6 empty defaults to ::/0",
+			family:      v1.IPv6Protocol,
+			cidrStrings: []string{},
+			want:        true,
+		},
+		{
+			name:        "IPv4 zero CIDR",
+			family:      v1.IPv4Protocol,
+			cidrStrings: []string{"0.0.0.0/0"},
+			want:        true,
+		},
+		{
+			name:        "IPv6 zero CIDR",
+			family:      v1.IPv6Protocol,
+			cidrStrings: []string{"::/0"},
+			want:        true,
+		},
+		{
+			name:        "IPv4 loopback /8",
+			family:      v1.IPv4Protocol,
+			cidrStrings: []string{"127.0.0.0/8"},
+			want:        true,
+		},
+		{
+			name:        "IPv6 loopback /128",
+			family:      v1.IPv6Protocol,
+			cidrStrings: []string{"::1/128"},
+			want:        true,
+		},
+		{
+			name:        "IPv4 non-loopback only",
+			family:      v1.IPv4Protocol,
+			cidrStrings: []string{"10.0.0.0/8", "192.168.0.0/16"},
+			want:        false,
+		},
+		{
+			name:        "IPv6 non-loopback only (fd00::/8)",
+			family:      v1.IPv6Protocol,
+			cidrStrings: []string{"fd00::/8"},
+			want:        false,
+		},
+		{
+			name:        "IPv6 family drops IPv4 CIDRs, falls back to ::/0",
+			family:      v1.IPv6Protocol,
+			cidrStrings: []string{"127.0.0.0/8"},
+			want:        true,
+		},
+		{
+			name:        "IPv4 family drops IPv6 CIDRs, falls back to 0.0.0.0/0",
+			family:      v1.IPv4Protocol,
+			cidrStrings: []string{"::1/128"},
+			want:        true,
+		},
+		{
+			name:        "Dual-stack mix, IPv6 family keeps only fd00::/8",
+			family:      v1.IPv6Protocol,
+			cidrStrings: []string{"10.0.0.0/8", "fd00::/8"},
+			want:        false,
+		},
+		{
+			name:        "Dual-stack mix, IPv4 family keeps only 10.0.0.0/8",
+			family:      v1.IPv4Protocol,
+			cidrStrings: []string{"10.0.0.0/8", "::1/128"},
+			want:        false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			npa := NewNodePortAddresses(tt.family, tt.cidrStrings)
+			if got := npa.ContainsLoopback(); got != tt.want {
+				t.Errorf("ContainsLoopback() = %v, want %v", got, tt.want)
 			}
 		})
 	}
