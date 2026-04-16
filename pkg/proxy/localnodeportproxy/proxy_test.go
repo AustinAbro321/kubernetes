@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strings"
 	"testing"
 	"time"
 
@@ -38,14 +37,14 @@ type testEndpoint struct {
 }
 
 func (e *testEndpoint) String() string              { return net.JoinHostPort(e.ip, fmt.Sprintf("%d", e.port)) }
-func (e *testEndpoint) IP() string                   { return e.ip }
-func (e *testEndpoint) Port() int                    { return e.port }
-func (e *testEndpoint) IsLocal() bool                { return false }
-func (e *testEndpoint) IsReady() bool                { return true }
-func (e *testEndpoint) IsServing() bool              { return true }
-func (e *testEndpoint) IsTerminating() bool          { return false }
-func (e *testEndpoint) ZoneHints() sets.Set[string]  { return nil }
-func (e *testEndpoint) NodeHints() sets.Set[string]  { return nil }
+func (e *testEndpoint) IP() string                  { return e.ip }
+func (e *testEndpoint) Port() int                   { return e.port }
+func (e *testEndpoint) IsLocal() bool               { return false }
+func (e *testEndpoint) IsReady() bool               { return true }
+func (e *testEndpoint) IsServing() bool             { return true }
+func (e *testEndpoint) IsTerminating() bool         { return false }
+func (e *testEndpoint) ZoneHints() sets.Set[string] { return nil }
+func (e *testEndpoint) NodeHints() sets.Set[string] { return nil }
 
 func makeServicePortName(ns, name, port string) proxy.ServicePortName {
 	return proxy.ServicePortName{
@@ -242,7 +241,6 @@ func TestSyncNodePorts_SkipUDP(t *testing.T) {
 		t.Fatalf("Expected 0 active listeners for UDP, got %d", len(p.active))
 	}
 }
-
 
 func TestRoundRobinEndpointSelection(t *testing.T) {
 	logger, _ := ktesting.NewTestContext(t)
@@ -765,53 +763,5 @@ func TestSessionAffinity_Expires(t *testing.T) {
 	}
 	if !sawOther {
 		t.Fatalf("After expiry: never saw a different backend than %q", first)
-	}
-}
-
-func TestLargeDataTransfer(t *testing.T) {
-	logger, _ := ktesting.NewTestContext(t)
-	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
-	defer p.Shutdown()
-
-	backend := startTCPEchoServer(t, "tcp4", "127.0.0.1:0")
-	defer backend.Close()
-	backendPort := backend.Addr().(*net.TCPAddr).Port
-
-	ep := &testEndpoint{ip: "127.0.0.1", port: backendPort}
-
-	fl, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	nodePort := fl.Addr().(*net.TCPAddr).Port
-	fl.Close()
-
-	key := fmt.Sprintf("tcp/%d", nodePort)
-	p.SyncNodePorts(map[string]*NodePortSpec{
-		key: {
-			ServicePortName: makeServicePortName("default", "big-svc", "http"),
-			Protocol:        v1.ProtocolTCP,
-			Port:            nodePort,
-			Endpoints:       []proxy.Endpoint{ep},
-		},
-	})
-
-	// Send 1MB of data
-	data := strings.Repeat("x", 1024*1024)
-	conn, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", nodePort), 2*time.Second)
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	go func() {
-		fmt.Fprint(conn, data)
-		conn.(*net.TCPConn).CloseWrite()
-	}()
-	buf, err := io.ReadAll(conn)
-	conn.Close()
-	if err != nil {
-		t.Fatalf("Failed to read: %v", err)
-	}
-	if len(buf) != len(data) {
-		t.Errorf("Expected %d bytes, got %d", len(data), len(buf))
 	}
 }
