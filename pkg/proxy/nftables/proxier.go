@@ -1766,9 +1766,6 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 		proxier.logger.Error(err, "Error syncing healthcheck endpoints")
 	}
 
-	// Sync localhost NodePort proxies. nftables cannot handle localhost
-	// NodePort traffic in kernel space (no route_localnet equivalent), so
-	// a userspace proxy on loopback is always needed.
 	if proxier.localhostNodePortProxy != nil {
 		proxier.localhostNodePortProxy.SyncNodePorts(
 			localnodeportproxy.BuildDesiredNodePorts(proxier.svcPortMap, proxier.endpointsMap, proxier.nodeName, proxier.topologyLabels))
