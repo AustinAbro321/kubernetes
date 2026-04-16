@@ -1447,43 +1447,12 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 		proxier.logger.Error(err, "Error syncing healthcheck endpoints")
 	}
 
-	// Sync localhost NodePort proxies for IPv6. iptables has no route_localnet
-	// equivalent for IPv6, so a userspace proxy on loopback is needed.
+	// Sync localhost NodePort proxies. When kernel-space iptables cannot handle
+	// localhost NodePort traffic (IPv6, or IPv4 without route_localnet), the
+	// userspace proxy on loopback handles it instead.
 	if proxier.localhostNodePortProxy != nil {
-		desiredNodePorts := make(map[string]*localnodeportproxy.NodePortSpec)
-		for svcName, svc := range proxier.svcPortMap {
-			svcInfo, ok := svc.(*servicePortInfo)
-			if !ok {
-				continue
-			}
-			if svcInfo.NodePort() == 0 {
-				continue
-			}
-			allEndpoints := proxier.endpointsMap[svcName]
-			clusterEndpoints, localEndpoints, _, hasEndpoints := proxy.CategorizeEndpoints(
-				allEndpoints, svcInfo, proxier.nodeName, proxier.topologyLabels)
-			if !hasEndpoints {
-				continue
-			}
-			endpoints := clusterEndpoints
-			if svcInfo.ExternalPolicyLocal() {
-				endpoints = localEndpoints
-			}
-			if len(endpoints) == 0 {
-				continue
-			}
-			protocol := strings.ToLower(string(svcInfo.Protocol()))
-			key := fmt.Sprintf("%s/%d", protocol, svcInfo.NodePort())
-			desiredNodePorts[key] = &localnodeportproxy.NodePortSpec{
-				ServicePortName:     svcName,
-				Protocol:            svcInfo.Protocol(),
-				Port:                svcInfo.NodePort(),
-				Endpoints:           endpoints,
-				SessionAffinityType: svcInfo.SessionAffinityType(),
-				StickyMaxAgeSeconds: svcInfo.StickyMaxAgeSeconds(),
-			}
-		}
-		proxier.localhostNodePortProxy.SyncNodePorts(desiredNodePorts)
+		proxier.localhostNodePortProxy.SyncNodePorts(
+			localnodeportproxy.BuildDesiredNodePorts(proxier.svcPortMap, proxier.endpointsMap, proxier.nodeName, proxier.topologyLabels))
 	}
 
 	if endpointUpdateResult.ConntrackCleanupRequired {

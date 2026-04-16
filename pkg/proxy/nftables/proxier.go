@@ -1767,41 +1767,10 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	// Sync localhost NodePort proxies. nftables cannot handle localhost
 	// NodePort traffic in kernel space (no route_localnet equivalent), so
 	// a userspace proxy on loopback is always needed.
-	desiredNodePorts := make(map[string]*localnodeportproxy.NodePortSpec)
-	for svcName, svc := range proxier.svcPortMap {
-		svcInfo, ok := svc.(*servicePortInfo)
-		if !ok {
-			continue
-		}
-		if svcInfo.NodePort() == 0 {
-			continue
-		}
-		allEndpoints := proxier.endpointsMap[svcName]
-		clusterEndpoints, localEndpoints, _, hasEndpoints := proxy.CategorizeEndpoints(
-			allEndpoints, svcInfo, proxier.nodeName, proxier.topologyLabels)
-		if !hasEndpoints {
-			continue
-		}
-		// Use same endpoint selection as kernel-space external traffic.
-		endpoints := clusterEndpoints
-		if svcInfo.ExternalPolicyLocal() {
-			endpoints = localEndpoints
-		}
-		if len(endpoints) == 0 {
-			continue
-		}
-		protocol := strings.ToLower(string(svcInfo.Protocol()))
-		key := fmt.Sprintf("%s/%d", protocol, svcInfo.NodePort())
-		desiredNodePorts[key] = &localnodeportproxy.NodePortSpec{
-			ServicePortName:     svcName,
-			Protocol:            svcInfo.Protocol(),
-			Port:                svcInfo.NodePort(),
-			Endpoints:           endpoints,
-			SessionAffinityType: svcInfo.SessionAffinityType(),
-			StickyMaxAgeSeconds: svcInfo.StickyMaxAgeSeconds(),
-		}
+	if proxier.localhostNodePortProxy != nil {
+		proxier.localhostNodePortProxy.SyncNodePorts(
+			localnodeportproxy.BuildDesiredNodePorts(proxier.svcPortMap, proxier.endpointsMap, proxier.nodeName, proxier.topologyLabels))
 	}
-	proxier.localhostNodePortProxy.SyncNodePorts(desiredNodePorts)
 
 	if endpointUpdateResult.ConntrackCleanupRequired {
 		// Finish housekeeping, clear stale conntrack entries for UDP Services
