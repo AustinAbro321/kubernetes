@@ -194,7 +194,7 @@ func (l *nodePortListener) acceptLoop(ctx context.Context) {
 	}
 }
 
-func (l *nodePortListener) handleTCPConn(_ context.Context, clientConn net.Conn) {
+func (l *nodePortListener) handleTCPConn(ctx context.Context, clientConn net.Conn) {
 	defer clientConn.Close()
 
 	ep := l.pickEndpoint()
@@ -209,6 +209,19 @@ func (l *nodePortListener) handleTCPConn(_ context.Context, clientConn net.Conn)
 		return
 	}
 	defer backendConn.Close()
+
+	// Force both sides closed on listener shutdown so io.Copy returns and
+	// the handler goroutine doesn't leak on a long-lived/idle connection.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			clientConn.Close()
+			backendConn.Close()
+		case <-done:
+		}
+	}()
 
 	var wg sync.WaitGroup
 	wg.Add(2)

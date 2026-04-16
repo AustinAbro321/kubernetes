@@ -415,6 +415,56 @@ func TestShutdown(t *testing.T) {
 	}
 }
 
+func TestShutdownClosesInFlightConnections(t *testing.T) {
+	logger, _ := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+
+	backend := startTCPEchoServer(t, "tcp4", "127.0.0.1:0")
+	defer backend.Close()
+	backendPort := backend.Addr().(*net.TCPAddr).Port
+
+	ep := &testEndpoint{ip: "127.0.0.1", port: backendPort}
+
+	fl, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodePort := fl.Addr().(*net.TCPAddr).Port
+	fl.Close()
+
+	key := fmt.Sprintf("tcp/%d", nodePort)
+	p.SyncNodePorts(map[string]*NodePortSpec{
+		key: {
+			ServicePortName: makeServicePortName("default", "inflight-svc", "http"),
+			Protocol:        v1.ProtocolTCP,
+			Port:            nodePort,
+			Endpoints:       []proxy.Endpoint{ep},
+		},
+	})
+
+	// Open an idle in-flight connection through the proxy.
+	conn, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", nodePort), 2*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	// Give handleTCPConn time to dial the backend and enter io.Copy.
+	time.Sleep(100 * time.Millisecond)
+
+	p.Shutdown()
+
+	// After shutdown the in-flight connection must be torn down; a blocking
+	// Read should return promptly (EOF / use of closed / reset), not block.
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 1)
+	if _, err := conn.Read(buf); err == nil {
+		t.Fatal("Expected connection to be closed after Shutdown, got nil error")
+	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatalf("Expected connection close after Shutdown, got read timeout: %v", err)
+	}
+}
+
 func TestIPv6(t *testing.T) {
 	// Check if IPv6 loopback is available
 	l, err := net.Listen("tcp6", "[::1]:0")
