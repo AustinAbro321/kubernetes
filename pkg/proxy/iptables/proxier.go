@@ -311,7 +311,6 @@ func NewProxier(ctx context.Context,
 	}
 
 	// When kernel-space iptables cannot handle localhost NodePort traffic
-	// (IPv6 has no route_localnet, IPv4 with route_localnet disabled),
 	// fall back to a userspace proxy on loopback.
 	if !localhostNodePorts && nodePortAddresses.ContainsLoopback() {
 		proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ipFamily, logger)
@@ -1447,9 +1446,6 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 		proxier.logger.Error(err, "Error syncing healthcheck endpoints")
 	}
 
-	// Sync localhost NodePort proxies. When kernel-space iptables cannot handle
-	// localhost NodePort traffic (IPv6, or IPv4 without route_localnet), the
-	// userspace proxy on loopback handles it instead.
 	if proxier.localhostNodePortProxy != nil {
 		proxier.localhostNodePortProxy.SyncNodePorts(
 			localnodeportproxy.BuildDesiredNodePorts(proxier.svcPortMap, proxier.endpointsMap, proxier.nodeName, proxier.topologyLabels))

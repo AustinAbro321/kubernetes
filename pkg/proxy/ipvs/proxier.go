@@ -1274,8 +1274,6 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	metrics.SyncProxyRulesNoLocalEndpointsTotal.WithLabelValues("internal", string(proxier.ipFamily)).Set(float64(proxier.serviceNoLocalEndpointsInternal.Len()))
 	metrics.SyncProxyRulesNoLocalEndpointsTotal.WithLabelValues("external", string(proxier.ipFamily)).Set(float64(proxier.serviceNoLocalEndpointsExternal.Len()))
 
-	// Sync localhost NodePort proxies. IPVS drops localhost-sourced traffic
-	// in the service chain, so a userspace proxy on loopback is needed.
 	if proxier.localhostNodePortProxy != nil {
 		proxier.localhostNodePortProxy.SyncNodePorts(
 			localnodeportproxy.BuildDesiredNodePorts(proxier.svcPortMap, proxier.endpointsMap, proxier.nodeName, proxier.topologyLabels))
