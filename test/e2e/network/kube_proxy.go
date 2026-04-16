@@ -452,7 +452,7 @@ var _ = common.SIGDescribe("KubeProxy", func() {
 		nodePort := svc.Spec.Ports[0].NodePort
 		cmd := fmt.Sprintf("curl --silent --max-time 5 %s", loopbackURL(nodePort, "/hostname"))
 		var hostname string
-		if err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 30*time.Second, true, func(_ context.Context) (bool, error) {
+		if err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 10*time.Second, true, func(_ context.Context) (bool, error) {
 			out, err := e2epodoutput.RunHostCmd(ns, hostExecPodName, cmd)
 			if err != nil {
 				return false, nil
@@ -526,7 +526,7 @@ var _ = common.SIGDescribe("KubeProxy", func() {
 
 		// Retry the first curl until the listener is reachable, then pin.
 		var first string
-		if err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 30*time.Second, true, func(_ context.Context) (bool, error) {
+		if err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 10*time.Second, true, func(_ context.Context) (bool, error) {
 			out, err := e2epodoutput.RunHostCmd(ns, hostExecPodName, cmd)
 			if err != nil {
 				return false, nil
