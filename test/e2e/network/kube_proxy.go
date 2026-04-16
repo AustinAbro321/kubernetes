@@ -397,10 +397,6 @@ var _ = common.SIGDescribe("KubeProxy", func() {
 		}
 	})
 
-	// loopbackURL returns an http://<loopback>:<port><path> URL appropriate for
-	// the cluster's IP family. The userspace localhost NodePort proxy at
-	// pkg/proxy/localnodeportproxy/proxy.go listens on 127.0.0.1 for IPv4 and
-	// on ::1 for IPv6.
 	loopbackURL := func(port int32, path string) string {
 		if framework.TestContext.ClusterIsIPv6() {
 			return fmt.Sprintf("http://[::1]:%d%s", port, path)
