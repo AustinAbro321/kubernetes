@@ -32,6 +32,9 @@ import (
 const (
 	// dialTimeout is the timeout for connecting to a backend endpoint.
 	dialTimeout = 5 * time.Second
+
+	// acceptErrorDelay is the pause after a non-fatal Accept error
+	acceptErrorDelay = 100 * time.Millisecond
 )
 
 // NodePortSpec describes a single NodePort that needs a localhost proxy.
@@ -189,6 +192,13 @@ func (l *nodePortListener) acceptLoop(ctx context.Context) {
 				return
 			}
 			l.logger.Error(err, "Accept error on localhost nodeport proxy", "key", l.key)
+			t := time.NewTimer(acceptErrorDelay)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+			}
 			continue
 		}
 		go l.handleTCPConn(ctx, conn)
