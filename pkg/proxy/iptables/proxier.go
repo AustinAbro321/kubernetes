@@ -42,6 +42,7 @@ import (
 	"k8s.io/kubernetes/pkg/proxy"
 	"k8s.io/kubernetes/pkg/proxy/conntrack"
 	"k8s.io/kubernetes/pkg/proxy/healthcheck"
+	"k8s.io/kubernetes/pkg/proxy/localnodeportproxy"
 	"k8s.io/kubernetes/pkg/proxy/metaproxier"
 	"k8s.io/kubernetes/pkg/proxy/metrics"
 	"k8s.io/kubernetes/pkg/proxy/runner"
@@ -206,6 +207,10 @@ type Proxier struct {
 
 	// nfAcctCounters can be used to determine if a counter exist in the nfacct subsystem.
 	nfAcctCounters map[string]bool
+
+	// localhostNodePortProxy handles userspace proxying of NodePorts on localhost
+	// for IPv6, where there is no route_localnet equivalent.
+	localhostNodePortProxy *localnodeportproxy.LocalNodePortProxy
 }
 
 // Proxier implements proxy.Provider
@@ -303,6 +308,13 @@ func NewProxier(ctx context.Context,
 			metrics.IPTablesCTStateInvalidDroppedNFAcctCounter: false,
 			metrics.LocalhostNodePortAcceptedNFAcctCounter:     false,
 		},
+	}
+
+	// When kernel-space iptables cannot handle localhost NodePort traffic
+	// (IPv6 has no route_localnet, IPv4 with route_localnet disabled),
+	// fall back to a userspace proxy on loopback.
+	if !localhostNodePorts && nodePortAddresses.ContainsLoopback() {
+		proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ipFamily, logger)
 	}
 
 	logger.V(2).Info("Iptables sync params", "minSyncPeriod", minSyncPeriod, "syncPeriod", syncPeriod, "maxSyncPeriod", proxyutil.FullSyncPeriod)
@@ -1289,8 +1301,8 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	// other service portal rules.
 	if proxier.nodePortAddresses.MatchAll() {
 		destinations := []string{"-m", "addrtype", "--dst-type", "LOCAL"}
-		// Block localhost nodePorts if they are not supported. (For IPv6 they never
-		// work, and for IPv4 they only work if we previously set `route_localnet`.)
+		// Exclude localhost from iptables NodePort rules when the userspace
+		// localhostNodePortProxy handles it instead (IPv6, or IPv4 without route_localnet).
 		if isIPv6 {
 			destinations = append(destinations, "!", "-d", "::1/128")
 		} else if !proxier.localhostNodePorts {
@@ -1309,8 +1321,9 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 		}
 		for _, ip := range nodeIPs {
 			if ip.IsLoopback() {
-				if isIPv6 {
-					proxier.logger.Error(nil, "--nodeport-addresses includes localhost but localhost NodePorts are not supported on IPv6", "address", ip.String())
+				if proxier.localhostNodePortProxy != nil {
+					// Localhost NodePort traffic is handled by the
+					// userspace localhostNodePortProxy, not iptables rules.
 					continue
 				} else if !proxier.localhostNodePorts {
 					proxier.logger.Error(nil, "--nodeport-addresses includes localhost but --iptables-localhost-nodeports=false was passed", "address", ip.String())
@@ -1432,6 +1445,45 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	}
 	if err := proxier.serviceHealthServer.SyncEndpoints(proxier.endpointsMap.LocalReadyEndpoints()); err != nil {
 		proxier.logger.Error(err, "Error syncing healthcheck endpoints")
+	}
+
+	// Sync localhost NodePort proxies for IPv6. iptables has no route_localnet
+	// equivalent for IPv6, so a userspace proxy on loopback is needed.
+	if proxier.localhostNodePortProxy != nil {
+		desiredNodePorts := make(map[string]*localnodeportproxy.NodePortSpec)
+		for svcName, svc := range proxier.svcPortMap {
+			svcInfo, ok := svc.(*servicePortInfo)
+			if !ok {
+				continue
+			}
+			if svcInfo.NodePort() == 0 {
+				continue
+			}
+			allEndpoints := proxier.endpointsMap[svcName]
+			clusterEndpoints, localEndpoints, _, hasEndpoints := proxy.CategorizeEndpoints(
+				allEndpoints, svcInfo, proxier.nodeName, proxier.topologyLabels)
+			if !hasEndpoints {
+				continue
+			}
+			endpoints := clusterEndpoints
+			if svcInfo.ExternalPolicyLocal() {
+				endpoints = localEndpoints
+			}
+			if len(endpoints) == 0 {
+				continue
+			}
+			protocol := strings.ToLower(string(svcInfo.Protocol()))
+			key := fmt.Sprintf("%s/%d", protocol, svcInfo.NodePort())
+			desiredNodePorts[key] = &localnodeportproxy.NodePortSpec{
+				ServicePortName:     svcName,
+				Protocol:            svcInfo.Protocol(),
+				Port:                svcInfo.NodePort(),
+				Endpoints:           endpoints,
+				SessionAffinityType: svcInfo.SessionAffinityType(),
+				StickyMaxAgeSeconds: svcInfo.StickyMaxAgeSeconds(),
+			}
+		}
+		proxier.localhostNodePortProxy.SyncNodePorts(desiredNodePorts)
 	}
 
 	if endpointUpdateResult.ConntrackCleanupRequired {
