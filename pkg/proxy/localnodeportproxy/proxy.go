@@ -123,7 +123,8 @@ func (p *LocalNodePortProxy) SyncNodePorts(desired map[string]*NodePortSpec) {
 	}
 }
 
-// Shutdown tears down all active listeners.
+// Shutdown tears down all active listeners and closes any in-flight connections.
+// This is primarily used by tests and as a hook for a future graceful-shutdown path.
 func (p *LocalNodePortProxy) Shutdown() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
