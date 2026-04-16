@@ -92,16 +92,6 @@ func TestSyncNodePorts_AddAndRemove(t *testing.T) {
 
 	ep := &testEndpoint{ip: "127.0.0.1", port: backendPort}
 
-	// Sync with one NodePort
-	desired := map[string]*NodePortSpec{
-		"tcp/0": {
-			ServicePortName: svcName,
-			Protocol:        v1.ProtocolTCP,
-			Port:            0, // will be set below
-			Endpoints:       []proxy.Endpoint{ep},
-		},
-	}
-
 	// Use a free port for the nodeport
 	freeListener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -111,7 +101,7 @@ func TestSyncNodePorts_AddAndRemove(t *testing.T) {
 	freeListener.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
-	desired = map[string]*NodePortSpec{
+	desired := map[string]*NodePortSpec{
 		key: {
 			ServicePortName: svcName,
 			Protocol:        v1.ProtocolTCP,
@@ -252,6 +242,7 @@ func TestSyncNodePorts_SkipUDP(t *testing.T) {
 		t.Fatalf("Expected 0 active listeners for UDP, got %d", len(p.active))
 	}
 }
+
 
 func TestRoundRobinEndpointSelection(t *testing.T) {
 	logger, _ := ktesting.NewTestContext(t)

@@ -209,7 +209,7 @@ type Proxier struct {
 	nfAcctCounters map[string]bool
 
 	// localhostNodePortProxy handles userspace proxying of NodePorts on localhost
-	// for IPv6, where there is no route_localnet equivalent.
+	// when kernel-space iptables cannot (IPv6, or IPv4 with route_localnet disabled).
 	localhostNodePortProxy *localnodeportproxy.LocalNodePortProxy
 }
 

@@ -113,7 +113,8 @@ func (p *LocalNodePortProxy) SyncNodePorts(desired map[string]*NodePortSpec) {
 			continue
 		}
 		if spec.Protocol != v1.ProtocolTCP {
-			p.logger.V(2).Info("Skipping non-TCP localhost nodeport proxy (not yet supported)", "key", key, "protocol", spec.Protocol)
+			p.logger.V(2).Info("Skipping non-TCP localhost nodeport proxy: UDP is not currently implemented",
+				"service", spec.ServicePortName, "protocol", spec.Protocol, "nodePort", spec.Port)
 			continue
 		}
 		l, err := p.newNodePortListener(key, spec)
@@ -148,7 +149,6 @@ func (p *LocalNodePortProxy) newNodePortListener(key string, spec *NodePortSpec)
 	ctx, cancel := context.WithCancel(context.Background())
 	l := &nodePortListener{
 		key:             key,
-		protocol:        spec.Protocol,
 		port:            spec.Port,
 		logger:          p.logger,
 		endpoints:       spec.Endpoints,
@@ -162,11 +162,10 @@ func (p *LocalNodePortProxy) newNodePortListener(key string, spec *NodePortSpec)
 }
 
 type nodePortListener struct {
-	key      string
-	protocol v1.Protocol
-	port     int
-	logger   klog.Logger
-	network  string // "tcp4" or "tcp6"
+	key     string
+	port    int
+	logger  klog.Logger
+	network string // "tcp4" or "tcp6"
 
 	mu        sync.Mutex
 	endpoints []proxy.Endpoint
