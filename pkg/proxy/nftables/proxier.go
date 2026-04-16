@@ -276,7 +276,9 @@ func NewProxier(ctx context.Context,
 		hairpinConnections:  newNFTElementStorage("set", hairpinConnectionsSet),
 	}
 
-	proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ipFamily, logger)
+	if nodePortAddresses.ContainsLoopback() {
+		proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ipFamily, logger)
+	}
 
 	logger.V(2).Info("NFTables sync params", "minSyncPeriod", minSyncPeriod, "syncPeriod", syncPeriod, "maxSyncPeriod", proxyutil.FullSyncPeriod)
 	// We need to pass *some* maxInterval to NewBoundedFrequencyRunner. time.Hour is arbitrary.
