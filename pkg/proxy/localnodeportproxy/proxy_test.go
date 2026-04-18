@@ -17,6 +17,7 @@ limitations under the License.
 package localnodeportproxy
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -69,8 +70,8 @@ func startTCPEchoServer(t *testing.T, network, addr string) net.Listener {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
-				io.Copy(c, c)
+				defer c.Close() //nolint:errcheck
+				_, _ = io.Copy(c, c)
 			}(conn)
 		}
 	}()
@@ -86,7 +87,7 @@ func TestSyncNodePorts_AddAndRemove(t *testing.T) {
 
 	// Start a backend echo server
 	backend := startTCPEchoServer(t, "tcp4", "127.0.0.1:0")
-	defer backend.Close()
+	defer backend.Close() //nolint:errcheck
 	backendPort := backend.Addr().(*net.TCPAddr).Port
 
 	ep := &testEndpoint{ip: "127.0.0.1", port: backendPort}
@@ -97,7 +98,7 @@ func TestSyncNodePorts_AddAndRemove(t *testing.T) {
 		t.Fatalf("Failed to get free port: %v", err)
 	}
 	nodePort := freeListener.Addr().(*net.TCPAddr).Port
-	freeListener.Close()
+	_ = freeListener.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
 	desired := map[string]*NodePortSpec{
@@ -124,10 +125,10 @@ func TestSyncNodePorts_AddAndRemove(t *testing.T) {
 		t.Fatalf("Failed to connect to nodeport proxy: %v", err)
 	}
 	testMsg := "hello nodeport"
-	fmt.Fprint(conn, testMsg)
-	conn.(*net.TCPConn).CloseWrite()
+	_, _ = fmt.Fprint(conn, testMsg)
+	_ = conn.(*net.TCPConn).CloseWrite()
 	buf, err := io.ReadAll(conn)
-	conn.Close()
+	_ = conn.Close()
 	if err != nil {
 		t.Fatalf("Failed to read from proxy: %v", err)
 	}
@@ -155,9 +156,9 @@ func TestSyncNodePorts_UpdateEndpoints(t *testing.T) {
 
 	// Start two backend servers
 	backend1 := startTCPEchoServer(t, "tcp4", "127.0.0.1:0")
-	defer backend1.Close()
+	defer backend1.Close() //nolint:errcheck
 	backend2 := startTCPEchoServer(t, "tcp4", "127.0.0.1:0")
-	defer backend2.Close()
+	defer backend2.Close() //nolint:errcheck
 
 	ep1 := &testEndpoint{ip: "127.0.0.1", port: backend1.Addr().(*net.TCPAddr).Port}
 	ep2 := &testEndpoint{ip: "127.0.0.1", port: backend2.Addr().(*net.TCPAddr).Port}
@@ -170,7 +171,7 @@ func TestSyncNodePorts_UpdateEndpoints(t *testing.T) {
 		t.Fatalf("Failed to get free port: %v", err)
 	}
 	nodePort := freeListener.Addr().(*net.TCPAddr).Port
-	freeListener.Close()
+	_ = freeListener.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
 
@@ -209,10 +210,10 @@ func TestSyncNodePorts_UpdateEndpoints(t *testing.T) {
 		t.Fatalf("Failed to connect after endpoint update: %v", err)
 	}
 	testMsg := "after update"
-	fmt.Fprint(conn, testMsg)
-	conn.(*net.TCPConn).CloseWrite()
+	_, _ = fmt.Fprint(conn, testMsg)
+	_ = conn.(*net.TCPConn).CloseWrite()
 	buf, err := io.ReadAll(conn)
-	conn.Close()
+	_ = conn.Close()
 	if err != nil {
 		t.Fatalf("Failed to read: %v", err)
 	}
@@ -265,15 +266,15 @@ func TestRoundRobinEndpointSelection(t *testing.T) {
 					return
 				}
 				go func(c net.Conn) {
-					defer c.Close()
-					fmt.Fprintf(c, "port:%d", p)
+					defer c.Close() //nolint:errcheck
+					_, _ = fmt.Fprintf(c, "port:%d", p)
 				}(conn)
 			}
 		}(l, port)
 	}
 	defer func() {
 		for _, b := range backends {
-			b.Close()
+			_ = b.Close()
 		}
 	}()
 
@@ -283,7 +284,7 @@ func TestRoundRobinEndpointSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodePort := fl.Addr().(*net.TCPAddr).Port
-	fl.Close()
+	_ = fl.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
 	p.SyncNodePorts(map[string]*NodePortSpec{
@@ -303,7 +304,7 @@ func TestRoundRobinEndpointSelection(t *testing.T) {
 			t.Fatalf("Failed to connect: %v", err)
 		}
 		buf, err := io.ReadAll(conn)
-		conn.Close()
+		_ = conn.Close()
 		if err != nil {
 			t.Fatalf("Failed to read: %v", err)
 		}
@@ -334,7 +335,7 @@ func TestBackendConnectionFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodePort := fl.Addr().(*net.TCPAddr).Port
-	fl.Close()
+	_ = fl.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
 	p.SyncNodePorts(map[string]*NodePortSpec{
@@ -353,7 +354,7 @@ func TestBackendConnectionFailure(t *testing.T) {
 		t.Fatalf("Failed to connect to proxy: %v", err)
 	}
 	buf, _ := io.ReadAll(conn)
-	conn.Close()
+	_ = conn.Close()
 
 	if len(buf) != 0 {
 		t.Errorf("Expected empty response on backend failure, got %q", string(buf))
@@ -373,7 +374,7 @@ func TestShutdown(t *testing.T) {
 			t.Fatal(err)
 		}
 		port := fl.Addr().(*net.TCPAddr).Port
-		fl.Close()
+		_ = fl.Close()
 		ports = append(ports, port)
 
 		key := fmt.Sprintf("tcp/%d", port)
@@ -409,7 +410,7 @@ func TestShutdownClosesInFlightConnections(t *testing.T) {
 	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
 
 	backend := startTCPEchoServer(t, "tcp4", "127.0.0.1:0")
-	defer backend.Close()
+	defer backend.Close() //nolint:errcheck
 	backendPort := backend.Addr().(*net.TCPAddr).Port
 
 	ep := &testEndpoint{ip: "127.0.0.1", port: backendPort}
@@ -419,7 +420,7 @@ func TestShutdownClosesInFlightConnections(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodePort := fl.Addr().(*net.TCPAddr).Port
-	fl.Close()
+	_ = fl.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
 	p.SyncNodePorts(map[string]*NodePortSpec{
@@ -436,7 +437,7 @@ func TestShutdownClosesInFlightConnections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck
 
 	// Give handleTCPConn time to dial the backend and enter io.Copy.
 	time.Sleep(100 * time.Millisecond)
@@ -445,12 +446,15 @@ func TestShutdownClosesInFlightConnections(t *testing.T) {
 
 	// After shutdown the in-flight connection must be torn down; a blocking
 	// Read should return promptly (EOF / use of closed / reset), not block.
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	buf := make([]byte, 1)
 	if _, err := conn.Read(buf); err == nil {
 		t.Fatal("Expected connection to be closed after Shutdown, got nil error")
-	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
-		t.Fatalf("Expected connection close after Shutdown, got read timeout: %v", err)
+	} else {
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			t.Fatalf("Expected connection close after Shutdown, got read timeout: %v", err)
+		}
 	}
 }
 
@@ -460,7 +464,7 @@ func TestIPv6(t *testing.T) {
 	if err != nil {
 		t.Skipf("IPv6 loopback not available: %v", err)
 	}
-	l.Close()
+	_ = l.Close()
 
 	logger, _ := ktesting.NewTestContext(t)
 	p := NewLocalNodePortProxy(v1.IPv6Protocol, logger)
@@ -475,7 +479,7 @@ func TestIPv6(t *testing.T) {
 
 	// Start an IPv6 backend
 	backend := startTCPEchoServer(t, "tcp6", "[::1]:0")
-	defer backend.Close()
+	defer backend.Close() //nolint:errcheck
 	backendPort := backend.Addr().(*net.TCPAddr).Port
 
 	ep := &testEndpoint{ip: "::1", port: backendPort}
@@ -485,7 +489,7 @@ func TestIPv6(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodePort := fl.Addr().(*net.TCPAddr).Port
-	fl.Close()
+	_ = fl.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
 	p.SyncNodePorts(map[string]*NodePortSpec{
@@ -502,10 +506,10 @@ func TestIPv6(t *testing.T) {
 		t.Fatalf("Failed to connect to IPv6 nodeport proxy: %v", err)
 	}
 	testMsg := "hello ipv6"
-	fmt.Fprint(conn, testMsg)
-	conn.(*net.TCPConn).CloseWrite()
+	_, _ = fmt.Fprint(conn, testMsg)
+	_ = conn.(*net.TCPConn).CloseWrite()
 	buf, err := io.ReadAll(conn)
-	conn.Close()
+	_ = conn.Close()
 	if err != nil {
 		t.Fatalf("Failed to read: %v", err)
 	}
@@ -524,7 +528,7 @@ func TestNoEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodePort := fl.Addr().(*net.TCPAddr).Port
-	fl.Close()
+	_ = fl.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
 	p.SyncNodePorts(map[string]*NodePortSpec{
@@ -542,7 +546,7 @@ func TestNoEndpoints(t *testing.T) {
 		t.Fatalf("Failed to connect: %v", err)
 	}
 	buf, _ := io.ReadAll(conn)
-	conn.Close()
+	_ = conn.Close()
 
 	if len(buf) != 0 {
 		t.Errorf("Expected empty response with no endpoints, got %q", string(buf))
@@ -569,8 +573,8 @@ func startPortReportingServer(t *testing.T, network string) (net.Listener, int, 
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
-				fmt.Fprintf(c, "port:%d", port)
+				defer c.Close() //nolint:errcheck
+				_, _ = fmt.Fprintf(c, "port:%d", port)
 			}(conn)
 		}
 	}()
@@ -588,7 +592,7 @@ func readBackendID(t *testing.T, network, addr string) string {
 		t.Fatalf("Failed to connect: %v", err)
 	}
 	buf, err := io.ReadAll(conn)
-	conn.Close()
+	_ = conn.Close()
 	if err != nil {
 		t.Fatalf("Failed to read: %v", err)
 	}
@@ -610,7 +614,7 @@ func TestSessionAffinity_PinsToSingleEndpoint(t *testing.T) {
 	}
 	defer func() {
 		for _, b := range backends {
-			b.Close()
+			_ = b.Close()
 		}
 	}()
 
@@ -619,7 +623,7 @@ func TestSessionAffinity_PinsToSingleEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodePort := fl.Addr().(*net.TCPAddr).Port
-	fl.Close()
+	_ = fl.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
 	p.SyncNodePorts(map[string]*NodePortSpec{
@@ -649,16 +653,16 @@ func TestSessionAffinity_PinnedEndpointRemoved(t *testing.T) {
 	defer p.Shutdown()
 
 	b1, _, ep1 := startPortReportingServer(t, "tcp4")
-	defer b1.Close()
+	defer b1.Close() //nolint:errcheck
 	b2, _, ep2 := startPortReportingServer(t, "tcp4")
-	defer b2.Close()
+	defer b2.Close() //nolint:errcheck
 
 	fl, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	nodePort := fl.Addr().(*net.TCPAddr).Port
-	fl.Close()
+	_ = fl.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
 	svcName := makeServicePortName("default", "sticky-svc", "http")
@@ -714,7 +718,7 @@ func TestSessionAffinity_Expires(t *testing.T) {
 	}
 	defer func() {
 		for _, b := range backends {
-			b.Close()
+			_ = b.Close()
 		}
 	}()
 
@@ -723,7 +727,7 @@ func TestSessionAffinity_Expires(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodePort := fl.Addr().(*net.TCPAddr).Port
-	fl.Close()
+	_ = fl.Close()
 
 	// StickyMaxAgeSeconds is in seconds; we can't use fractional values via the
 	// public spec, so poke the listener directly after construction.

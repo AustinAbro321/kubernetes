@@ -205,7 +205,7 @@ func (l *nodePortListener) acceptLoop(ctx context.Context) {
 }
 
 func (l *nodePortListener) handleTCPConn(ctx context.Context, clientConn net.Conn) {
-	defer clientConn.Close()
+	defer clientConn.Close() //nolint:errcheck
 
 	ep := l.pickEndpoint()
 	if ep == nil {
@@ -218,7 +218,7 @@ func (l *nodePortListener) handleTCPConn(ctx context.Context, clientConn net.Con
 		l.logger.Error(err, "Failed to connect to backend", "key", l.key, "endpoint", ep.String())
 		return
 	}
-	defer backendConn.Close()
+	defer backendConn.Close() //nolint:errcheck
 
 	// Force both sides closed on listener shutdown so io.Copy returns and
 	// the handler goroutine doesn't leak on a long-lived/idle connection.
@@ -227,8 +227,8 @@ func (l *nodePortListener) handleTCPConn(ctx context.Context, clientConn net.Con
 	go func() {
 		select {
 		case <-ctx.Done():
-			clientConn.Close()
-			backendConn.Close()
+			_ = clientConn.Close()
+			_ = backendConn.Close()
 		case <-done:
 		}
 	}()
@@ -237,16 +237,16 @@ func (l *nodePortListener) handleTCPConn(ctx context.Context, clientConn net.Con
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		io.Copy(backendConn, clientConn)
+		_, _ = io.Copy(backendConn, clientConn)
 		if tc, ok := backendConn.(*net.TCPConn); ok {
-			tc.CloseWrite()
+			_ = tc.CloseWrite()
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		io.Copy(clientConn, backendConn)
+		_, _ = io.Copy(clientConn, backendConn)
 		if tc, ok := clientConn.(*net.TCPConn); ok {
-			tc.CloseWrite()
+			_ = tc.CloseWrite()
 		}
 	}()
 	wg.Wait()
@@ -295,5 +295,5 @@ func (l *nodePortListener) update(spec *NodePortSpec) {
 
 func (l *nodePortListener) shutdown() {
 	l.cancel()
-	l.listener.Close()
+	_ = l.listener.Close()
 }
