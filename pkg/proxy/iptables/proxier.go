@@ -208,8 +208,8 @@ type Proxier struct {
 	// nfAcctCounters can be used to determine if a counter exist in the nfacct subsystem.
 	nfAcctCounters map[string]bool
 
-	// localhostNodePortProxy handles userspace proxying of NodePorts on localhost
-	// when kernel-space iptables cannot (IPv6, or IPv4 with route_localnet disabled).
+	// localhostNodePortProxy handles userspace NodePort proxying on loopback for
+	// IPv6, which has no route_localnet equivalent.
 	localhostNodePortProxy *localnodeportproxy.LocalNodePortProxy
 }
 
@@ -237,10 +237,7 @@ func NewProxier(ctx context.Context,
 	logger := klog.LoggerWithValues(klog.FromContext(ctx), "ipFamily", ipFamily)
 	nodePortAddresses := proxyutil.NewNodePortAddresses(ipFamily, nodePortAddressStrings)
 
-	if !nodePortAddresses.ContainsIPv4Loopback() {
-		localhostNodePorts = false
-	}
-	if localhostNodePorts {
+	if localhostNodePorts && nodePortAddresses.ContainsIPv4Loopback() {
 		// Set the route_localnet sysctl we need for exposing NodePorts on loopback addresses
 		// Refer to https://issues.k8s.io/90259
 		logger.Info("Setting route_localnet=1 to allow node-ports on localhost; to change this either disable iptables.localhostNodePorts (--iptables-localhost-nodeports) or set nodePortAddresses (--nodeport-addresses) to filter loopback addresses")
@@ -310,9 +307,9 @@ func NewProxier(ctx context.Context,
 		},
 	}
 
-	// When kernel-space iptables cannot handle localhost NodePort traffic
-	// fall back to a userspace proxy on loopback.
-	if !localhostNodePorts && nodePortAddresses.ContainsLoopback() {
+	// IPv6 has no route_localnet; fall back to a userspace proxy when the user
+	// opts in. IPv4 is handled by kernel iptables and respects the flag directly.
+	if ipFamily == v1.IPv6Protocol && localhostNodePorts && nodePortAddresses.ContainsLoopback() {
 		proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ipFamily, logger)
 	}
 
@@ -1300,8 +1297,8 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	// other service portal rules.
 	if proxier.nodePortAddresses.MatchAll() {
 		destinations := []string{"-m", "addrtype", "--dst-type", "LOCAL"}
-		// Exclude localhost from iptables NodePort rules when the userspace
-		// localhostNodePortProxy handles it instead (IPv6, or IPv4 without route_localnet).
+		// Exclude localhost: IPv6 goes through localhostNodePortProxy,
+		// IPv4 is disabled when --iptables-localhost-nodeports=false.
 		if isIPv6 {
 			destinations = append(destinations, "!", "-d", "::1/128")
 		} else if !proxier.localhostNodePorts {
