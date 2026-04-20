@@ -404,34 +404,44 @@ var _ = common.SIGDescribe("KubeProxy", func() {
 		return fmt.Sprintf("http://127.0.0.1:%d%s", port, path)
 	}
 
-	ginkgo.It("should proxy localhost NodePort traffic to backends", func(ctx context.Context) {
+	ginkgo.It("should proxy localhost NodePort traffic to backends across nodes", func(ctx context.Context) {
 		cs := fr.ClientSet
 		ns := fr.Namespace.Name
 
-		nodes, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 1)
+		nodes, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 2)
 		framework.ExpectNoError(err)
-		if len(nodes.Items) < 1 {
-			e2eskipper.Skipf("Test requires >= 1 Ready nodes, but there are only %v nodes", len(nodes.Items))
+		if len(nodes.Items) < 2 {
+			e2eskipper.Skipf("Test requires >= 2 Ready nodes, but there are only %v nodes", len(nodes.Items))
 		}
-		nodeName := nodes.Items[0].Name
+		clientNodeName := nodes.Items[0].Name
+		remoteNodeName := nodes.Items[1].Name
 
 		hostExecPodName := "host-exec-pod"
 		hostExecPod := e2epod.NewExecPodSpec(ns, hostExecPodName, true)
-		e2epod.SetNodeSelection(&hostExecPod.Spec, e2epod.NodeSelection{Name: nodeName})
+		e2epod.SetNodeSelection(&hostExecPod.Spec, e2epod.NodeSelection{Name: clientNodeName})
 		e2epod.NewPodClient(fr).CreateSync(ctx, hostExecPod)
 
-		ginkgo.By("creating backend pod")
+		ginkgo.By("creating one backend pod on the client node and one on a different node")
 		label := map[string]string{"app": "agnhost-localhost-nodeport"}
 		httpPort := []v1.ContainerPort{{ContainerPort: 8080, Protocol: v1.ProtocolTCP}}
-		backendName := "agnhost-localhost-nodeport"
-		backendPod := e2epod.NewAgnhostPod(ns, backendName, nil, nil, httpPort, "netexec")
-		backendPod.Labels = label
-		e2epod.SetNodeSelection(&backendPod.Spec, e2epod.NodeSelection{Name: nodeName})
-		e2epod.NewPodClient(fr).CreateSync(ctx, backendPod)
+		backendNames := sets.New[string]()
+		for _, bp := range []struct {
+			name string
+			node string
+		}{
+			{"agnhost-localhost-nodeport-local", clientNodeName},
+			{"agnhost-localhost-nodeport-remote", remoteNodeName},
+		} {
+			backendNames.Insert(bp.name)
+			pod := e2epod.NewAgnhostPod(ns, bp.name, nil, nil, httpPort, "netexec")
+			pod.Labels = label
+			e2epod.SetNodeSelection(&pod.Spec, e2epod.NodeSelection{Name: bp.node})
+			e2epod.NewPodClient(fr).CreateSync(ctx, pod)
+		}
 
 		ginkgo.By("creating NodePort service")
 		svc := &v1.Service{
-			ObjectMeta: metav1.ObjectMeta{Name: backendName},
+			ObjectMeta: metav1.ObjectMeta{Name: "agnhost-localhost-nodeport"},
 			Spec: v1.ServiceSpec{
 				Type:     v1.ServiceTypeNodePort,
 				Selector: label,
@@ -446,24 +456,28 @@ var _ = common.SIGDescribe("KubeProxy", func() {
 		framework.ExpectNoError(err)
 
 		ginkgo.By("waiting for endpoints")
-		framework.ExpectNoError(e2eendpointslice.WaitForEndpointCount(ctx, cs, ns, svc.Name, 1))
+		framework.ExpectNoError(e2eendpointslice.WaitForEndpointCount(ctx, cs, ns, svc.Name, 2))
 
-		ginkgo.By("curling localhost NodePort from the node's netns")
+		ginkgo.By("curling localhost NodePort from the node's netns until both backends have responded")
 		nodePort := svc.Spec.Ports[0].NodePort
 		cmd := fmt.Sprintf("curl --silent --max-time 5 %s", loopbackURL(nodePort, "/hostname"))
-		var hostname string
-		if err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 10*time.Second, true, func(_ context.Context) (bool, error) {
+		seen := sets.New[string]()
+		if err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 60*time.Second, true, func(_ context.Context) (bool, error) {
 			out, err := e2epodoutput.RunHostCmd(ns, hostExecPodName, cmd)
 			if err != nil {
 				return false, nil
 			}
-			hostname = strings.TrimSpace(out)
-			return hostname != "", nil
+			hostname := strings.TrimSpace(out)
+			if hostname == "" {
+				return false, nil
+			}
+			if !backendNames.Has(hostname) {
+				return false, fmt.Errorf("response %q is not one of the backend pods %v", hostname, backendNames.UnsortedList())
+			}
+			seen.Insert(hostname)
+			return seen.Equal(backendNames), nil
 		}); err != nil {
-			framework.Failf("failed to reach localhost NodePort %d from node netns: %v", nodePort, err)
-		}
-		if hostname != backendName {
-			framework.Failf("expected localhost NodePort curl to hit %q, got %q", backendName, hostname)
+			framework.Failf("expected localhost NodePort %d to reach both backends %v, only saw %v: %v", nodePort, backendNames.UnsortedList(), seen.UnsortedList(), err)
 		}
 	})
 
