@@ -108,7 +108,7 @@ func (p *LocalNodePortProxy) SyncNodePorts(desired []NodePortSpec) {
 	// Remove stale listeners
 	for key, l := range p.active {
 		if _, ok := byKey[key]; !ok {
-			p.logger.V(2).Info("Removing localhost nodeport proxy", "key", key)
+			p.logger.V(2).Info("Removing localhost nodeport proxy", "protocol", l.protocol, "port", l.port)
 			l.shutdown()
 			delete(p.active, key)
 		}
@@ -121,17 +121,17 @@ func (p *LocalNodePortProxy) SyncNodePorts(desired []NodePortSpec) {
 			continue
 		}
 		if spec.Protocol != v1.ProtocolTCP {
-			p.logger.V(2).Info("Skipping non-TCP localhost nodeport proxy: UDP is not currently implemented",
-				"service", spec.ServicePortName, "protocol", spec.Protocol, "nodePort", spec.NodePort)
+			p.logger.V(2).Info("Skipping non-TCP localhost nodeport proxy",
+				"service", spec.ServicePortName, "protocol", spec.Protocol, "port", spec.NodePort)
 			continue
 		}
-		l, err := p.newNodePortListener(key, spec)
+		l, err := p.newNodePortListener(spec)
 		if err != nil {
-			p.logger.Error(err, "Failed to create localhost nodeport proxy", "key", key)
+			p.logger.Error(err, "Failed to create localhost nodeport proxy", "protocol", spec.Protocol, "port", spec.NodePort)
 			continue
 		}
 		p.active[key] = l
-		p.logger.V(2).Info("Created localhost nodeport proxy", "key", key, "endpoints", len(spec.Endpoints))
+		p.logger.V(2).Info("Created localhost nodeport proxy", "protocol", spec.Protocol, "port", spec.NodePort, "endpoints", len(spec.Endpoints))
 	}
 }
 
@@ -151,7 +151,7 @@ func (p *LocalNodePortProxy) Shutdown() {
 	}
 }
 
-func (p *LocalNodePortProxy) newNodePortListener(key string, spec *NodePortSpec) (*nodePortListener, error) {
+func (p *LocalNodePortProxy) newNodePortListener(spec *NodePortSpec) (*nodePortListener, error) {
 	addr := net.JoinHostPort(p.listenIP, fmt.Sprintf("%d", spec.NodePort))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -160,7 +160,7 @@ func (p *LocalNodePortProxy) newNodePortListener(key string, spec *NodePortSpec)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	l := &nodePortListener{
-		key:             key,
+		protocol:        spec.Protocol,
 		port:            spec.NodePort,
 		logger:          p.logger,
 		endpoints:       spec.Endpoints,
@@ -173,9 +173,9 @@ func (p *LocalNodePortProxy) newNodePortListener(key string, spec *NodePortSpec)
 }
 
 type nodePortListener struct {
-	key    string
-	port   int
-	logger klog.Logger
+	protocol v1.Protocol
+	port     int
+	logger   klog.Logger
 
 	mu        sync.Mutex
 	endpoints []string
@@ -200,7 +200,7 @@ func (l *nodePortListener) acceptLoop(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			l.logger.Error(err, "Accept error on localhost nodeport proxy", "key", l.key)
+			l.logger.Error(err, "Accept error on localhost nodeport proxy", "protocol", l.protocol, "port", l.port)
 			t := time.NewTimer(acceptErrorDelay)
 			select {
 			case <-ctx.Done():
@@ -219,13 +219,13 @@ func (l *nodePortListener) handleTCPConn(ctx context.Context, clientConn net.Con
 
 	ep := l.pickEndpoint()
 	if ep == "" {
-		l.logger.V(4).Info("No endpoints available for localhost nodeport proxy", "key", l.key)
+		l.logger.V(4).Info("No endpoints available for localhost nodeport proxy", "protocol", l.protocol, "port", l.port)
 		return
 	}
 
 	backendConn, err := net.DialTimeout("tcp", ep, dialTimeout)
 	if err != nil {
-		l.logger.Error(err, "Failed to connect to backend", "key", l.key, "endpoint", ep)
+		l.logger.Error(err, "Failed to connect to backend", "protocol", l.protocol, "port", l.port, "endpoint", ep)
 		return
 	}
 	defer backendConn.Close() //nolint:errcheck
