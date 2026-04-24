@@ -18,6 +18,7 @@ package localnodeportproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -30,13 +31,8 @@ import (
 	"k8s.io/kubernetes/pkg/proxy"
 )
 
-const (
-	// dialTimeout is the timeout for connecting to a backend endpoint.
-	dialTimeout = 5 * time.Second
-
-	// acceptErrorDelay is the pause after a non-fatal Accept error
-	acceptErrorDelay = 100 * time.Millisecond
-)
+// dialTimeout is the timeout for connecting to a backend endpoint.
+const dialTimeout = 5 * time.Second
 
 // NodePortSpec describes a single NodePort that needs a localhost proxy.
 // Callers build a slice of these during their own sync loop and hand it
@@ -201,17 +197,10 @@ func (l *nodePortListener) acceptLoop(ctx context.Context) {
 	for {
 		conn, err := l.listener.Accept()
 		if err != nil {
-			if ctx.Err() != nil {
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return
 			}
 			l.logger.Error(err, "Accept error on localhost nodeport proxy", "protocol", l.protocol, "port", l.port)
-			t := time.NewTimer(acceptErrorDelay)
-			select {
-			case <-ctx.Done():
-				t.Stop()
-				return
-			case <-t.C:
-			}
 			continue
 		}
 		go l.handleTCPConn(ctx, conn)
