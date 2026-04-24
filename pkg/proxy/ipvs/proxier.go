@@ -795,6 +795,8 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 		}
 	}
 
+	var localhostNodePorts []localnodeportproxy.NodePortSpec
+
 	// Build IPVS rules for each service.
 	for svcPortName, svcPort := range proxier.svcPortMap {
 		svcInfo, ok := svcPort.(*servicePortInfo)
@@ -1051,6 +1053,31 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 		}
 
 		if svcInfo.NodePort() != 0 {
+			if proxier.localhostNodePortProxy != nil {
+				allEndpoints := proxier.endpointsMap[svcPortName]
+				clusterEndpoints, localEndpoints, _, hasEndpoints := proxy.CategorizeEndpoints(allEndpoints, svcInfo, proxier.nodeName, proxier.topologyLabels)
+				if hasEndpoints {
+					eps := clusterEndpoints
+					if svcInfo.ExternalPolicyLocal() {
+						eps = localEndpoints
+					}
+					if len(eps) > 0 {
+						epStrs := make([]string, 0, len(eps))
+						for _, ep := range eps {
+							epStrs = append(epStrs, ep.String())
+						}
+						localhostNodePorts = append(localhostNodePorts, localnodeportproxy.NodePortSpec{
+							ServicePortName:     svcPortName,
+							Protocol:            svcInfo.Protocol(),
+							NodePort:            svcInfo.NodePort(),
+							Endpoints:           epStrs,
+							SessionAffinityType: svcInfo.SessionAffinityType(),
+							StickyMaxAgeSeconds: svcInfo.StickyMaxAgeSeconds(),
+						})
+					}
+				}
+			}
+
 			if len(nodeIPs) == 0 {
 				// Skip nodePort configuration since an error occurred when
 				// computing nodeAddresses or nodeIPs.
@@ -1275,8 +1302,7 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	metrics.SyncProxyRulesNoLocalEndpointsTotal.WithLabelValues("external", string(proxier.ipFamily)).Set(float64(proxier.serviceNoLocalEndpointsExternal.Len()))
 
 	if proxier.localhostNodePortProxy != nil {
-		proxier.localhostNodePortProxy.SyncNodePorts(
-			localnodeportproxy.BuildDesiredNodePorts(proxier.svcPortMap, proxier.endpointsMap, proxier.nodeName, proxier.topologyLabels))
+		proxier.localhostNodePortProxy.SyncNodePorts(localhostNodePorts)
 	}
 
 	if endpointUpdateResult.ConntrackCleanupRequired {

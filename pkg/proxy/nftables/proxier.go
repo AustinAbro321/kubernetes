@@ -1193,6 +1193,8 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	serviceNoLocalEndpointsTotalInternal := 0
 	serviceNoLocalEndpointsTotalExternal := 0
 
+	var localhostNodePorts []localnodeportproxy.NodePortSpec
+
 	// Build rules for each service-port.
 	for svcName, svc := range proxier.svcPortMap {
 		svcInfo, ok := svc.(*servicePortInfo)
@@ -1458,6 +1460,26 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 
 		// Capture nodeports.
 		if svcInfo.NodePort() != 0 {
+			if proxier.localhostNodePortProxy != nil && hasEndpoints {
+				eps := clusterEndpoints
+				if svcInfo.ExternalPolicyLocal() {
+					eps = localEndpoints
+				}
+				if len(eps) > 0 {
+					epStrs := make([]string, 0, len(eps))
+					for _, ep := range eps {
+						epStrs = append(epStrs, ep.String())
+					}
+					localhostNodePorts = append(localhostNodePorts, localnodeportproxy.NodePortSpec{
+						ServicePortName:     svcName,
+						Protocol:            svcInfo.Protocol(),
+						NodePort:            svcInfo.NodePort(),
+						Endpoints:           epStrs,
+						SessionAffinityType: svcInfo.SessionAffinityType(),
+						StickyMaxAgeSeconds: svcInfo.StickyMaxAgeSeconds(),
+					})
+				}
+			}
 			if hasEndpoints {
 				// Jump to the external destination chain.  For better or for
 				// worse, nodeports are not subject to loadBalancerSourceRanges,
@@ -1767,8 +1789,7 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	}
 
 	if proxier.localhostNodePortProxy != nil {
-		proxier.localhostNodePortProxy.SyncNodePorts(
-			localnodeportproxy.BuildDesiredNodePorts(proxier.svcPortMap, proxier.endpointsMap, proxier.nodeName, proxier.topologyLabels))
+		proxier.localhostNodePortProxy.SyncNodePorts(localhostNodePorts)
 	}
 
 	if endpointUpdateResult.ConntrackCleanupRequired {

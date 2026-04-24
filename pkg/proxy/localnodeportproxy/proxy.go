@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,28 +38,31 @@ const (
 	acceptErrorDelay = 100 * time.Millisecond
 )
 
-// nodePortSpec describes a single NodePort that needs a localhost proxy.
-type nodePortSpec struct {
-	servicePortName proxy.ServicePortName
-	protocol        v1.Protocol
-	port            int
-	endpoints       []string
-	// sessionAffinityType mirrors Service.spec.sessionAffinity. When set to
+// NodePortSpec describes a single NodePort that needs a localhost proxy.
+// Callers build a slice of these during their own sync loop and hand it
+// to SyncNodePorts.
+type NodePortSpec struct {
+	ServicePortName proxy.ServicePortName
+	Protocol        v1.Protocol
+	NodePort        int
+	// Endpoints is the set of "ip:port" backends the listener round-robins over.
+	Endpoints []string
+	// SessionAffinityType mirrors Service.spec.sessionAffinity. When set to
 	// ClientIP, consecutive connections from localhost are pinned to the same
-	// endpoint for stickyMaxAgeSeconds.
-	sessionAffinityType v1.ServiceAffinity
-	// stickyMaxAgeSeconds is the affinity timeout in seconds, used only when
-	// sessionAffinityType is ClientIP.
-	stickyMaxAgeSeconds int
+	// endpoint for StickyMaxAgeSeconds.
+	SessionAffinityType v1.ServiceAffinity
+	// StickyMaxAgeSeconds is the affinity timeout in seconds, used only when
+	// SessionAffinityType is ClientIP.
+	StickyMaxAgeSeconds int
 }
 
 // affinityTimeout returns the effective affinity window for the spec, or 0
 // when affinity is disabled.
-func (s *nodePortSpec) affinityTimeout() time.Duration {
-	if s.sessionAffinityType != v1.ServiceAffinityClientIP {
+func (s *NodePortSpec) affinityTimeout() time.Duration {
+	if s.SessionAffinityType != v1.ServiceAffinityClientIP {
 		return 0
 	}
-	return time.Duration(s.stickyMaxAgeSeconds) * time.Second
+	return time.Duration(s.StickyMaxAgeSeconds) * time.Second
 }
 
 // LocalNodePortProxy manages userspace L4 proxy listeners on localhost
@@ -88,14 +92,22 @@ func NewLocalNodePortProxy(ipFamily v1.IPFamily, logger klog.Logger) *LocalNodeP
 
 // SyncNodePorts reconciles the set of active localhost NodePort proxies with
 // the desired state. It creates new listeners, removes stale ones, and updates
-// endpoint lists for existing ones.
-func (p *LocalNodePortProxy) SyncNodePorts(desired map[string]*nodePortSpec) {
+// endpoint lists for existing ones. Entries with duplicate proto/port keys are
+// collapsed: the last one wins (API validation prevents duplicates in practice).
+func (p *LocalNodePortProxy) SyncNodePorts(desired []NodePortSpec) {
+	byKey := make(map[string]*NodePortSpec, len(desired))
+	for i := range desired {
+		spec := &desired[i]
+		key := nodePortKey(spec.Protocol, spec.NodePort)
+		byKey[key] = spec
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	// Remove stale listeners
 	for key, l := range p.active {
-		if _, ok := desired[key]; !ok {
+		if _, ok := byKey[key]; !ok {
 			p.logger.V(2).Info("Removing localhost nodeport proxy", "key", key)
 			l.shutdown()
 			delete(p.active, key)
@@ -103,14 +115,14 @@ func (p *LocalNodePortProxy) SyncNodePorts(desired map[string]*nodePortSpec) {
 	}
 
 	// Add or update
-	for key, spec := range desired {
+	for key, spec := range byKey {
 		if existing, ok := p.active[key]; ok {
 			existing.update(spec)
 			continue
 		}
-		if spec.protocol != v1.ProtocolTCP {
+		if spec.Protocol != v1.ProtocolTCP {
 			p.logger.V(2).Info("Skipping non-TCP localhost nodeport proxy: UDP is not currently implemented",
-				"service", spec.servicePortName, "protocol", spec.protocol, "nodePort", spec.port)
+				"service", spec.ServicePortName, "protocol", spec.Protocol, "nodePort", spec.NodePort)
 			continue
 		}
 		l, err := p.newNodePortListener(key, spec)
@@ -119,8 +131,12 @@ func (p *LocalNodePortProxy) SyncNodePorts(desired map[string]*nodePortSpec) {
 			continue
 		}
 		p.active[key] = l
-		p.logger.V(2).Info("Created localhost nodeport proxy", "key", key, "endpoints", len(spec.endpoints))
+		p.logger.V(2).Info("Created localhost nodeport proxy", "key", key, "endpoints", len(spec.Endpoints))
 	}
+}
+
+func nodePortKey(protocol v1.Protocol, port int) string {
+	return fmt.Sprintf("%s/%d", strings.ToLower(string(protocol)), port)
 }
 
 // Shutdown tears down all active listeners and closes any in-flight connections.
@@ -135,8 +151,8 @@ func (p *LocalNodePortProxy) Shutdown() {
 	}
 }
 
-func (p *LocalNodePortProxy) newNodePortListener(key string, spec *nodePortSpec) (*nodePortListener, error) {
-	addr := net.JoinHostPort(p.listenIP, fmt.Sprintf("%d", spec.port))
+func (p *LocalNodePortProxy) newNodePortListener(key string, spec *NodePortSpec) (*nodePortListener, error) {
+	addr := net.JoinHostPort(p.listenIP, fmt.Sprintf("%d", spec.NodePort))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
@@ -145,9 +161,9 @@ func (p *LocalNodePortProxy) newNodePortListener(key string, spec *nodePortSpec)
 	ctx, cancel := context.WithCancel(context.Background())
 	l := &nodePortListener{
 		key:             key,
-		port:            spec.port,
+		port:            spec.NodePort,
 		logger:          p.logger,
-		endpoints:       spec.endpoints,
+		endpoints:       spec.Endpoints,
 		affinityTimeout: spec.affinityTimeout(),
 		listener:        listener,
 		cancel:          cancel,
@@ -272,11 +288,11 @@ func (l *nodePortListener) pickEndpoint() string {
 	return ep
 }
 
-func (l *nodePortListener) update(spec *nodePortSpec) {
+func (l *nodePortListener) update(spec *NodePortSpec) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.endpoints = spec.endpoints
-	if l.nextIndex >= len(spec.endpoints) {
+	l.endpoints = spec.Endpoints
+	if l.nextIndex >= len(spec.Endpoints) {
 		l.nextIndex = 0
 	}
 	newTimeout := spec.affinityTimeout()
