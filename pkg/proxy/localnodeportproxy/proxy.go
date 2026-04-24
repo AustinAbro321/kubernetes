@@ -240,21 +240,18 @@ func (l *nodePortListener) handleTCPConn(ctx context.Context, clientConn net.Con
 	}()
 
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, _ = io.Copy(backendConn, clientConn)
 		if tc, ok := backendConn.(*net.TCPConn); ok {
 			_ = tc.CloseWrite()
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		_, _ = io.Copy(clientConn, backendConn)
 		if tc, ok := clientConn.(*net.TCPConn); ok {
 			_ = tc.CloseWrite()
 		}
-	}()
+	})
 	wg.Wait()
 }
 
