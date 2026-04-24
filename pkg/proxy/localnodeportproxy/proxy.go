@@ -65,11 +65,12 @@ func (s *nodePortSpec) affinityTimeout() time.Duration {
 // for NodePort services that cannot be handled by kernel-space proxying
 // (e.g. nftables mode, IPv6, IPVS).
 type LocalNodePortProxy struct {
-	mu       sync.Mutex
-	ipFamily v1.IPFamily
 	logger   klog.Logger
 	listenIP string
-	active   map[string]*nodePortListener
+
+	// mu guards active against concurrent Sync/Shutdown calls.
+	mu     sync.Mutex
+	active map[string]*nodePortListener
 }
 
 // NewLocalNodePortProxy creates a new proxy for the given IP family.
@@ -79,7 +80,6 @@ func NewLocalNodePortProxy(ipFamily v1.IPFamily, logger klog.Logger) *LocalNodeP
 		listenIP = "::1"
 	}
 	return &LocalNodePortProxy{
-		ipFamily: ipFamily,
 		logger:   logger,
 		listenIP: listenIP,
 		active:   make(map[string]*nodePortListener),
