@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"strings"
 	"sync"
@@ -33,6 +34,11 @@ import (
 
 // dialTimeout is the timeout for connecting to a backend endpoint.
 const dialTimeout = 5 * time.Second
+
+// pickEndpointIndex returns the next index into the endpoints slice. It
+// defaults to a random pick, but is a package variable so unit tests can
+// override it for determinism.
+var pickEndpointIndex = rand.IntN
 
 // NodePortSpec describes a single NodePort that needs a localhost proxy.
 // Callers build a slice of these during their own sync loop and hand it
@@ -185,7 +191,6 @@ type nodePortListener struct {
 	// mu guards the endpoint-selection state below
 	mu        sync.Mutex
 	endpoints []string
-	nextIndex int
 	// affinityTimeout is 0 when SessionAffinity is disabled; otherwise, it is
 	// the duration for which a picked endpoint stays pinned for localhost
 	// traffic. Since the source IP for all localhost traffic is 127.0.0.1 or
@@ -272,8 +277,7 @@ func (l *nodePortListener) pickEndpoint() string {
 		}
 		// Pinned endpoint no longer in the set; fall through and pick a new one.
 	}
-	ep := l.endpoints[l.nextIndex%len(l.endpoints)]
-	l.nextIndex = (l.nextIndex + 1) % len(l.endpoints)
+	ep := l.endpoints[pickEndpointIndex(len(l.endpoints))]
 	if l.affinityTimeout > 0 {
 		l.pinnedEndpoint = ep
 		l.pinnedLastUsed = now
@@ -285,9 +289,6 @@ func (l *nodePortListener) update(spec *NodePortSpec) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.endpoints = spec.Endpoints
-	if l.nextIndex >= len(spec.Endpoints) {
-		l.nextIndex = 0
-	}
 	newTimeout := spec.affinityTimeout()
 	if l.affinityTimeout != newTimeout {
 		// Affinity config changed; drop any stale pin.

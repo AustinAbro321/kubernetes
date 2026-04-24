@@ -254,79 +254,38 @@ func TestSyncNodePorts_SkipUDP(t *testing.T) {
 	}
 }
 
-func TestRoundRobinEndpointSelection(t *testing.T) {
-	_, ctx := ktesting.NewTestContext(t)
-	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
-	defer p.Shutdown()
+// withPickEndpointIndex replaces the package-level pickEndpointIndex for the
+// duration of the test and restores it via t.Cleanup.
+func withPickEndpointIndex(t *testing.T, stub func(int) int) {
+	t.Helper()
+	orig := pickEndpointIndex
+	pickEndpointIndex = stub
+	t.Cleanup(func() { pickEndpointIndex = orig })
+}
 
-	// Start 3 backend servers that respond with their port
-	var backends []net.Listener
-	var endpoints []string
-	for range 3 {
-		l, err := net.Listen("tcp4", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("Failed to start backend: %v", err)
+func TestPickEndpoint_ReturnsIndexedEndpoint(t *testing.T) {
+	endpoints := []string{"10.0.0.1:8080", "10.0.0.2:8080", "10.0.0.3:8080"}
+	var next int
+	withPickEndpointIndex(t, func(n int) int {
+		if n != len(endpoints) {
+			t.Fatalf("pickEndpointIndex called with n=%d, want %d", n, len(endpoints))
 		}
-		backends = append(backends, l)
-		port := l.Addr().(*net.TCPAddr).Port
-		endpoints = append(endpoints, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-		go func(listener net.Listener, p int) {
-			for {
-				conn, err := listener.Accept()
-				if err != nil {
-					return
-				}
-				go func(c net.Conn) {
-					defer c.Close() //nolint:errcheck
-					_, _ = fmt.Fprintf(c, "port:%d", p)
-				}(conn)
-			}
-		}(l, port)
+		return next
+	})
+
+	l := &nodePortListener{endpoints: endpoints}
+	for i, want := range endpoints {
+		next = i
+		if got := l.pickEndpoint(); got != want {
+			t.Errorf("pickEndpoint() with index %d = %q, want %q", i, got, want)
+		}
 	}
-	defer func() {
-		for _, b := range backends {
-			_ = b.Close()
-		}
-	}()
+}
 
-	// Get free port for nodeport
-	fl, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	nodePort := fl.Addr().(*net.TCPAddr).Port
-	_ = fl.Close()
-
-	p.SyncNodePorts([]NodePortSpec{{
-		ServicePortName: makeServicePortName("default", "rr-svc", "http"),
-		Protocol:        v1.ProtocolTCP,
-		NodePort:        nodePort,
-		Endpoints:       endpoints,
-	}})
-
-	// Make 6 connections and verify round-robin distribution
-	responses := make(map[string]int)
-	for range 6 {
-		conn, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", nodePort), 2*time.Second)
-		if err != nil {
-			t.Fatalf("Failed to connect: %v", err)
-		}
-		buf, err := io.ReadAll(conn)
-		_ = conn.Close()
-		if err != nil {
-			t.Fatalf("Failed to read: %v", err)
-		}
-		responses[string(buf)]++
-	}
-
-	// Each of the 3 backends should have been hit exactly twice
-	if len(responses) != 3 {
-		t.Errorf("Expected 3 different backends, got %d: %v", len(responses), responses)
-	}
-	for resp, count := range responses {
-		if count != 2 {
-			t.Errorf("Backend %s was hit %d times, expected 2", resp, count)
-		}
+func TestPickEndpoint_NoEndpointsReturnsEmpty(t *testing.T) {
+	l := &nodePortListener{}
+	if got := l.pickEndpoint(); got != "" {
+		t.Errorf("pickEndpoint() with no endpoints = %q, want empty", got)
 	}
 }
 
@@ -686,6 +645,16 @@ func TestSessionAffinity_PinnedEndpointRemoved(t *testing.T) {
 }
 
 func TestSessionAffinity_Expires(t *testing.T) {
+	// Use a deterministic picker that cycles 0, 1, 2, … so consecutive
+	// unpinned picks select different endpoints. This lets us verify that
+	// affinity expiry re-rolls without relying on randomness.
+	var callCount int
+	withPickEndpointIndex(t, func(n int) int {
+		i := callCount % n
+		callCount++
+		return i
+	})
+
 	_, ctx := ktesting.NewTestContext(t)
 	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
 	defer p.Shutdown()
@@ -734,17 +703,10 @@ func TestSessionAffinity_Expires(t *testing.T) {
 	if got := readBackendID(t, "tcp4", addr); got != first {
 		t.Fatalf("Before expiry: expected %q, got %q", first, got)
 	}
+	// After expiry, the next pick must re-roll. With the cycling stub, that
+	// lands on a different backend.
 	time.Sleep(100 * time.Millisecond)
-	// After expiry, round-robin may move us elsewhere. Repeat a few times to
-	// make it overwhelmingly likely we observe a different endpoint.
-	sawOther := false
-	for range 10 {
-		if got := readBackendID(t, "tcp4", addr); got != first {
-			sawOther = true
-			break
-		}
-	}
-	if !sawOther {
-		t.Fatalf("After expiry: never saw a different backend than %q", first)
+	if got := readBackendID(t, "tcp4", addr); got == first {
+		t.Fatalf("After expiry: expected a different backend than %q, got the same", first)
 	}
 }
