@@ -42,6 +42,7 @@ import (
 	"k8s.io/kubernetes/pkg/proxy"
 	"k8s.io/kubernetes/pkg/proxy/conntrack"
 	"k8s.io/kubernetes/pkg/proxy/healthcheck"
+	"k8s.io/kubernetes/pkg/proxy/localnodeportproxy"
 	"k8s.io/kubernetes/pkg/proxy/metaproxier"
 	"k8s.io/kubernetes/pkg/proxy/metrics"
 	"k8s.io/kubernetes/pkg/proxy/runner"
@@ -206,6 +207,10 @@ type Proxier struct {
 
 	// nfAcctCounters can be used to determine if a counter exist in the nfacct subsystem.
 	nfAcctCounters map[string]bool
+
+	// localhostNodePortProxy handles userspace NodePort proxying on loopback for
+	// IPv6, which has no route_localnet equivalent.
+	localhostNodePortProxy *localnodeportproxy.LocalNodePortProxy
 }
 
 // Proxier implements proxy.Provider
@@ -232,10 +237,7 @@ func NewProxier(ctx context.Context,
 	logger := klog.LoggerWithValues(klog.FromContext(ctx), "ipFamily", ipFamily)
 	nodePortAddresses := proxyutil.NewNodePortAddresses(ipFamily, nodePortAddressStrings)
 
-	if !nodePortAddresses.ContainsIPv4Loopback() {
-		localhostNodePorts = false
-	}
-	if localhostNodePorts {
+	if localhostNodePorts && nodePortAddresses.ContainsIPv4Loopback() {
 		// Set the route_localnet sysctl we need for exposing NodePorts on loopback addresses
 		// Refer to https://issues.k8s.io/90259
 		logger.Info("Setting route_localnet=1 to allow node-ports on localhost; to change this either disable iptables.localhostNodePorts (--iptables-localhost-nodeports) or set nodePortAddresses (--nodeport-addresses) to filter loopback addresses")
@@ -303,6 +305,12 @@ func NewProxier(ctx context.Context,
 			metrics.IPTablesCTStateInvalidDroppedNFAcctCounter: false,
 			metrics.LocalhostNodePortAcceptedNFAcctCounter:     false,
 		},
+	}
+
+	// IPv6 has no route_localnet; fall back to a userspace proxy when the user
+	// opts in. IPv4 is handled by kernel iptables and respects the flag directly.
+	if ipFamily == v1.IPv6Protocol && localhostNodePorts && nodePortAddresses.ContainsLoopback() {
+		proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ctx, ipFamily)
 	}
 
 	logger.V(2).Info("Iptables sync params", "minSyncPeriod", minSyncPeriod, "syncPeriod", syncPeriod, "maxSyncPeriod", proxyutil.FullSyncPeriod)
@@ -823,6 +831,8 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	serviceNoLocalEndpointsTotalInternal := 0
 	serviceNoLocalEndpointsTotalExternal := 0
 
+	var localhostNodePorts []localnodeportproxy.NodePortSpec
+
 	// Build rules for each service-port.
 	for svcName, svc := range proxier.svcPortMap {
 		svcInfo, ok := svc.(*servicePortInfo)
@@ -1022,6 +1032,26 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 
 		// Capture nodeports.
 		if svcInfo.NodePort() != 0 {
+			if proxier.localhostNodePortProxy != nil && hasEndpoints {
+				eps := clusterEndpoints
+				if svcInfo.ExternalPolicyLocal() {
+					eps = localEndpoints
+				}
+				if len(eps) > 0 {
+					epStrs := make([]string, 0, len(eps))
+					for _, ep := range eps {
+						epStrs = append(epStrs, ep.String())
+					}
+					localhostNodePorts = append(localhostNodePorts, localnodeportproxy.NodePortSpec{
+						ServicePortName:     svcName,
+						Protocol:            svcInfo.Protocol(),
+						NodePort:            svcInfo.NodePort(),
+						Endpoints:           epStrs,
+						SessionAffinityType: svcInfo.SessionAffinityType(),
+						StickyMaxAgeSeconds: svcInfo.StickyMaxAgeSeconds(),
+					})
+				}
+			}
 			if hasEndpoints {
 				// Jump to the external destination chain.  For better or for
 				// worse, nodeports are not subect to loadBalancerSourceRanges,
@@ -1289,8 +1319,8 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	// other service portal rules.
 	if proxier.nodePortAddresses.MatchAll() {
 		destinations := []string{"-m", "addrtype", "--dst-type", "LOCAL"}
-		// Block localhost nodePorts if they are not supported. (For IPv6 they never
-		// work, and for IPv4 they only work if we previously set `route_localnet`.)
+		// Exclude localhost: IPv6 goes through localhostNodePortProxy,
+		// IPv4 is disabled when --iptables-localhost-nodeports=false.
 		if isIPv6 {
 			destinations = append(destinations, "!", "-d", "::1/128")
 		} else if !proxier.localhostNodePorts {
@@ -1309,8 +1339,9 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 		}
 		for _, ip := range nodeIPs {
 			if ip.IsLoopback() {
-				if isIPv6 {
-					proxier.logger.Error(nil, "--nodeport-addresses includes localhost but localhost NodePorts are not supported on IPv6", "address", ip.String())
+				if proxier.localhostNodePortProxy != nil {
+					// Localhost NodePort traffic is handled by the
+					// userspace localhostNodePortProxy, not iptables rules.
 					continue
 				} else if !proxier.localhostNodePorts {
 					proxier.logger.Error(nil, "--nodeport-addresses includes localhost but --iptables-localhost-nodeports=false was passed", "address", ip.String())
@@ -1432,6 +1463,10 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	}
 	if err := proxier.serviceHealthServer.SyncEndpoints(proxier.endpointsMap.LocalReadyEndpoints()); err != nil {
 		proxier.logger.Error(err, "Error syncing healthcheck endpoints")
+	}
+
+	if proxier.localhostNodePortProxy != nil {
+		proxier.localhostNodePortProxy.SyncNodePorts(localhostNodePorts)
 	}
 
 	if endpointUpdateResult.ConntrackCleanupRequired {

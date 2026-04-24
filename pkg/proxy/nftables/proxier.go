@@ -43,6 +43,7 @@ import (
 	"k8s.io/kubernetes/pkg/proxy"
 	"k8s.io/kubernetes/pkg/proxy/conntrack"
 	"k8s.io/kubernetes/pkg/proxy/healthcheck"
+	"k8s.io/kubernetes/pkg/proxy/localnodeportproxy"
 	"k8s.io/kubernetes/pkg/proxy/metaproxier"
 	"k8s.io/kubernetes/pkg/proxy/metrics"
 	"k8s.io/kubernetes/pkg/proxy/runner"
@@ -198,6 +199,10 @@ type Proxier struct {
 	noEndpointNodePorts *nftElementStorage
 	serviceNodePorts    *nftElementStorage
 	hairpinConnections  *nftElementStorage
+
+	// localhostNodePortProxy handles userspace proxying of NodePorts on localhost
+	// when kernel-space proxying is not possible (e.g. no route_localnet).
+	localhostNodePortProxy *localnodeportproxy.LocalNodePortProxy
 }
 
 // Proxier implements proxy.Provider
@@ -269,6 +274,10 @@ func NewProxier(ctx context.Context,
 		noEndpointNodePorts: newNFTElementStorage("map", noEndpointNodePortsMap),
 		serviceNodePorts:    newNFTElementStorage("map", serviceNodePortsMap),
 		hairpinConnections:  newNFTElementStorage("set", hairpinConnectionsSet),
+	}
+
+	if nodePortAddresses.ContainsLoopback() {
+		proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ctx, ipFamily)
 	}
 
 	logger.V(2).Info("NFTables sync params", "minSyncPeriod", minSyncPeriod, "syncPeriod", syncPeriod, "maxSyncPeriod", proxyutil.FullSyncPeriod)
@@ -540,7 +549,6 @@ func (proxier *Proxier) setupNFTables(tx *knftables.Transaction) {
 		}
 		for _, ip := range nodeIPs {
 			if ip.IsLoopback() {
-				proxier.logger.Error(nil, "--nodeport-addresses includes localhost but localhost NodePorts are not supported", "address", ip.String())
 				continue
 			}
 			tx.Add(&knftables.Element{
@@ -1185,6 +1193,8 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	serviceNoLocalEndpointsTotalInternal := 0
 	serviceNoLocalEndpointsTotalExternal := 0
 
+	var localhostNodePorts []localnodeportproxy.NodePortSpec
+
 	// Build rules for each service-port.
 	for svcName, svc := range proxier.svcPortMap {
 		svcInfo, ok := svc.(*servicePortInfo)
@@ -1450,6 +1460,26 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 
 		// Capture nodeports.
 		if svcInfo.NodePort() != 0 {
+			if proxier.localhostNodePortProxy != nil && hasEndpoints {
+				eps := clusterEndpoints
+				if svcInfo.ExternalPolicyLocal() {
+					eps = localEndpoints
+				}
+				if len(eps) > 0 {
+					epStrs := make([]string, 0, len(eps))
+					for _, ep := range eps {
+						epStrs = append(epStrs, ep.String())
+					}
+					localhostNodePorts = append(localhostNodePorts, localnodeportproxy.NodePortSpec{
+						ServicePortName:     svcName,
+						Protocol:            svcInfo.Protocol(),
+						NodePort:            svcInfo.NodePort(),
+						Endpoints:           epStrs,
+						SessionAffinityType: svcInfo.SessionAffinityType(),
+						StickyMaxAgeSeconds: svcInfo.StickyMaxAgeSeconds(),
+					})
+				}
+			}
 			if hasEndpoints {
 				// Jump to the external destination chain.  For better or for
 				// worse, nodeports are not subject to loadBalancerSourceRanges,
@@ -1756,6 +1786,10 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	}
 	if err := proxier.serviceHealthServer.SyncEndpoints(proxier.endpointsMap.LocalReadyEndpoints()); err != nil {
 		proxier.logger.Error(err, "Error syncing healthcheck endpoints")
+	}
+
+	if proxier.localhostNodePortProxy != nil {
+		proxier.localhostNodePortProxy.SyncNodePorts(localhostNodePorts)
 	}
 
 	if endpointUpdateResult.ConntrackCleanupRequired {
