@@ -69,23 +69,19 @@ type LocalNodePortProxy struct {
 	ipFamily v1.IPFamily
 	logger   klog.Logger
 	listenIP string
-	network  string // "tcp4" or "tcp6"
 	active   map[string]*nodePortListener
 }
 
 // NewLocalNodePortProxy creates a new proxy for the given IP family.
 func NewLocalNodePortProxy(ipFamily v1.IPFamily, logger klog.Logger) *LocalNodePortProxy {
 	listenIP := "127.0.0.1"
-	network := "tcp4"
 	if ipFamily == v1.IPv6Protocol {
 		listenIP = "::1"
-		network = "tcp6"
 	}
 	return &LocalNodePortProxy{
 		ipFamily: ipFamily,
 		logger:   logger,
 		listenIP: listenIP,
-		network:  network,
 		active:   make(map[string]*nodePortListener),
 	}
 }
@@ -141,7 +137,7 @@ func (p *LocalNodePortProxy) Shutdown() {
 
 func (p *LocalNodePortProxy) newNodePortListener(key string, spec *nodePortSpec) (*nodePortListener, error) {
 	addr := net.JoinHostPort(p.listenIP, fmt.Sprintf("%d", spec.port))
-	listener, err := net.Listen(p.network, addr)
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
@@ -155,17 +151,15 @@ func (p *LocalNodePortProxy) newNodePortListener(key string, spec *nodePortSpec)
 		affinityTimeout: spec.affinityTimeout(),
 		listener:        listener,
 		cancel:          cancel,
-		network:         p.network,
 	}
 	go l.acceptLoop(ctx)
 	return l, nil
 }
 
 type nodePortListener struct {
-	key     string
-	port    int
-	logger  klog.Logger
-	network string // "tcp4" or "tcp6"
+	key    string
+	port   int
+	logger klog.Logger
 
 	mu        sync.Mutex
 	endpoints []string
@@ -213,7 +207,7 @@ func (l *nodePortListener) handleTCPConn(ctx context.Context, clientConn net.Con
 		return
 	}
 
-	backendConn, err := net.DialTimeout(l.network, ep, dialTimeout)
+	backendConn, err := net.DialTimeout("tcp", ep, dialTimeout)
 	if err != nil {
 		l.logger.Error(err, "Failed to connect to backend", "key", l.key, "endpoint", ep)
 		return

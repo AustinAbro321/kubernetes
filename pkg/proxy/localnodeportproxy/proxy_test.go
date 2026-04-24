@@ -457,9 +457,6 @@ func TestIPv6(t *testing.T) {
 	if p.listenIP != "::1" {
 		t.Errorf("Expected listenIP '::1', got %q", p.listenIP)
 	}
-	if p.network != "tcp6" {
-		t.Errorf("Expected network 'tcp6', got %q", p.network)
-	}
 
 	// Start an IPv6 backend
 	backend := startTCPEchoServer(t, "tcp6", "[::1]:0")
