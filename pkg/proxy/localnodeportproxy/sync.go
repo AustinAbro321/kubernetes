@@ -50,13 +50,17 @@ func BuildDesiredNodePorts(
 		if len(endpoints) == 0 {
 			continue
 		}
+		eps := make([]string, 0, len(endpoints))
+		for _, ep := range endpoints {
+			eps = append(eps, ep.String())
+		}
 		protocol := strings.ToLower(string(svcInfo.Protocol()))
 		key := fmt.Sprintf("%s/%d", protocol, svcInfo.NodePort())
 		desired[key] = &nodePortSpec{
 			servicePortName:     svcName,
 			protocol:            svcInfo.Protocol(),
 			port:                svcInfo.NodePort(),
-			endpoints:           endpoints,
+			endpoints:           eps,
 			sessionAffinityType: svcInfo.SessionAffinityType(),
 			stickyMaxAgeSeconds: svcInfo.StickyMaxAgeSeconds(),
 		}

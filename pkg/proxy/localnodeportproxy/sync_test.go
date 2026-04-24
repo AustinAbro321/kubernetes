@@ -150,7 +150,7 @@ func TestBuildDesiredNodePorts_ReadyEndpoint(t *testing.T) {
 	if spec.protocol != v1.ProtocolTCP {
 		t.Errorf("spec.protocol = %s, want TCP", spec.protocol)
 	}
-	if len(spec.endpoints) != 1 || spec.endpoints[0].IP() != "10.0.0.1" {
+	if len(spec.endpoints) != 1 || spec.endpoints[0] != "10.0.0.1:8080" {
 		t.Errorf("unexpected endpoints: %+v", spec.endpoints)
 	}
 }
@@ -196,8 +196,8 @@ func TestBuildDesiredNodePorts_ExternalPolicyLocal_WithLocalEndpoint(t *testing.
 	if !ok {
 		t.Fatalf("Expected key tcp/30080, got %+v", got)
 	}
-	if len(spec.endpoints) != 1 || spec.endpoints[0].IP() != "10.0.0.1" {
-		t.Fatalf("ExternalPolicyLocal: expected only the local endpoint 10.0.0.1, got %+v", spec.endpoints)
+	if len(spec.endpoints) != 1 || spec.endpoints[0] != "10.0.0.1:8080" {
+		t.Fatalf("ExternalPolicyLocal: expected only the local endpoint 10.0.0.1:8080, got %+v", spec.endpoints)
 	}
 }
 

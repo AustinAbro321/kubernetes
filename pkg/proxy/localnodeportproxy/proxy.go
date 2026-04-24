@@ -42,7 +42,7 @@ type nodePortSpec struct {
 	servicePortName proxy.ServicePortName
 	protocol        v1.Protocol
 	port            int
-	endpoints       []proxy.Endpoint
+	endpoints       []string
 	// sessionAffinityType mirrors Service.spec.sessionAffinity. When set to
 	// ClientIP, consecutive connections from localhost are pinned to the same
 	// endpoint for stickyMaxAgeSeconds.
@@ -168,7 +168,7 @@ type nodePortListener struct {
 	network string // "tcp4" or "tcp6"
 
 	mu        sync.Mutex
-	endpoints []proxy.Endpoint
+	endpoints []string
 	nextIndex int
 	// affinityTimeout is 0 when SessionAffinity is disabled; otherwise, it is
 	// the duration for which a picked endpoint stays pinned for localhost
@@ -176,7 +176,7 @@ type nodePortListener struct {
 	// ::1, ClientIP affinity effectively pins all traffic through this
 	// listener to a single endpoint until the pin goes stale.
 	affinityTimeout time.Duration
-	pinnedEndpoint  string // String() of the currently pinned endpoint, empty if none
+	pinnedEndpoint  string // "ip:port" of the currently pinned endpoint, empty if none
 	pinnedLastUsed  time.Time
 
 	listener net.Listener
@@ -208,14 +208,14 @@ func (l *nodePortListener) handleTCPConn(ctx context.Context, clientConn net.Con
 	defer clientConn.Close() //nolint:errcheck
 
 	ep := l.pickEndpoint()
-	if ep == nil {
+	if ep == "" {
 		l.logger.V(4).Info("No endpoints available for localhost nodeport proxy", "key", l.key)
 		return
 	}
 
-	backendConn, err := net.DialTimeout(l.network, ep.String(), dialTimeout)
+	backendConn, err := net.DialTimeout(l.network, ep, dialTimeout)
 	if err != nil {
-		l.logger.Error(err, "Failed to connect to backend", "key", l.key, "endpoint", ep.String())
+		l.logger.Error(err, "Failed to connect to backend", "key", l.key, "endpoint", ep)
 		return
 	}
 	defer backendConn.Close() //nolint:errcheck
@@ -252,17 +252,17 @@ func (l *nodePortListener) handleTCPConn(ctx context.Context, clientConn net.Con
 	wg.Wait()
 }
 
-func (l *nodePortListener) pickEndpoint() proxy.Endpoint {
+func (l *nodePortListener) pickEndpoint() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	if len(l.endpoints) == 0 {
-		return nil
+		return ""
 	}
 	now := time.Now()
 	if l.affinityTimeout > 0 && l.pinnedEndpoint != "" && now.Sub(l.pinnedLastUsed) <= l.affinityTimeout {
 		for _, ep := range l.endpoints {
-			if ep.String() == l.pinnedEndpoint {
+			if ep == l.pinnedEndpoint {
 				l.pinnedLastUsed = now
 				return ep
 			}
@@ -272,7 +272,7 @@ func (l *nodePortListener) pickEndpoint() proxy.Endpoint {
 	ep := l.endpoints[l.nextIndex%len(l.endpoints)]
 	l.nextIndex = (l.nextIndex + 1) % len(l.endpoints)
 	if l.affinityTimeout > 0 {
-		l.pinnedEndpoint = ep.String()
+		l.pinnedEndpoint = ep
 		l.pinnedLastUsed = now
 	}
 	return ep

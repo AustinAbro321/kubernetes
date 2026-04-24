@@ -21,31 +21,15 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"testing"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2/ktesting"
 	"k8s.io/kubernetes/pkg/proxy"
 )
-
-// testEndpoint implements proxy.Endpoint for testing.
-type testEndpoint struct {
-	ip   string
-	port int
-}
-
-func (e *testEndpoint) String() string              { return net.JoinHostPort(e.ip, fmt.Sprintf("%d", e.port)) }
-func (e *testEndpoint) IP() string                  { return e.ip }
-func (e *testEndpoint) Port() int                   { return e.port }
-func (e *testEndpoint) IsLocal() bool               { return false }
-func (e *testEndpoint) IsReady() bool               { return true }
-func (e *testEndpoint) IsServing() bool             { return true }
-func (e *testEndpoint) IsTerminating() bool         { return false }
-func (e *testEndpoint) ZoneHints() sets.Set[string] { return nil }
-func (e *testEndpoint) NodeHints() sets.Set[string] { return nil }
 
 func makeServicePortName(ns, name, port string) proxy.ServicePortName {
 	return proxy.ServicePortName{
@@ -90,7 +74,7 @@ func TestSyncNodePorts_AddAndRemove(t *testing.T) {
 	defer backend.Close() //nolint:errcheck
 	backendPort := backend.Addr().(*net.TCPAddr).Port
 
-	ep := &testEndpoint{ip: "127.0.0.1", port: backendPort}
+	ep := net.JoinHostPort("127.0.0.1", strconv.Itoa(backendPort))
 
 	// Use a free port for the nodeport
 	freeListener, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -106,7 +90,7 @@ func TestSyncNodePorts_AddAndRemove(t *testing.T) {
 			servicePortName: svcName,
 			protocol:        v1.ProtocolTCP,
 			port:            nodePort,
-			endpoints:       []proxy.Endpoint{ep},
+			endpoints:       []string{ep},
 		},
 	}
 
@@ -160,8 +144,8 @@ func TestSyncNodePorts_UpdateEndpoints(t *testing.T) {
 	backend2 := startTCPEchoServer(t, "tcp4", "127.0.0.1:0")
 	defer backend2.Close() //nolint:errcheck
 
-	ep1 := &testEndpoint{ip: "127.0.0.1", port: backend1.Addr().(*net.TCPAddr).Port}
-	ep2 := &testEndpoint{ip: "127.0.0.1", port: backend2.Addr().(*net.TCPAddr).Port}
+	ep1 := net.JoinHostPort("127.0.0.1", strconv.Itoa(backend1.Addr().(*net.TCPAddr).Port))
+	ep2 := net.JoinHostPort("127.0.0.1", strconv.Itoa(backend2.Addr().(*net.TCPAddr).Port))
 
 	svcName := makeServicePortName("default", "test-svc", "http")
 
@@ -181,7 +165,7 @@ func TestSyncNodePorts_UpdateEndpoints(t *testing.T) {
 			servicePortName: svcName,
 			protocol:        v1.ProtocolTCP,
 			port:            nodePort,
-			endpoints:       []proxy.Endpoint{ep1},
+			endpoints:       []string{ep1},
 		},
 	})
 
@@ -195,7 +179,7 @@ func TestSyncNodePorts_UpdateEndpoints(t *testing.T) {
 			servicePortName: svcName,
 			protocol:        v1.ProtocolTCP,
 			port:            nodePort,
-			endpoints:       []proxy.Endpoint{ep2},
+			endpoints:       []string{ep2},
 		},
 	})
 
@@ -234,7 +218,7 @@ func TestSyncNodePorts_SkipUDP(t *testing.T) {
 			servicePortName: svcName,
 			protocol:        v1.ProtocolUDP,
 			port:            30053,
-			endpoints:       []proxy.Endpoint{&testEndpoint{ip: "10.0.0.1", port: 53}},
+			endpoints:       []string{"10.0.0.1:53"},
 		},
 	})
 
@@ -250,7 +234,7 @@ func TestRoundRobinEndpointSelection(t *testing.T) {
 
 	// Start 3 backend servers that respond with their port
 	var backends []net.Listener
-	var endpoints []proxy.Endpoint
+	var endpoints []string
 	for range 3 {
 		l, err := net.Listen("tcp4", "127.0.0.1:0")
 		if err != nil {
@@ -258,7 +242,7 @@ func TestRoundRobinEndpointSelection(t *testing.T) {
 		}
 		backends = append(backends, l)
 		port := l.Addr().(*net.TCPAddr).Port
-		endpoints = append(endpoints, &testEndpoint{ip: "127.0.0.1", port: port})
+		endpoints = append(endpoints, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 		go func(listener net.Listener, p int) {
 			for {
 				conn, err := listener.Accept()
@@ -328,7 +312,7 @@ func TestBackendConnectionFailure(t *testing.T) {
 	defer p.Shutdown()
 
 	// Use an endpoint that isn't listening
-	ep := &testEndpoint{ip: "127.0.0.1", port: 1} // port 1 is almost certainly not listening
+	ep := "127.0.0.1:1" // port 1 is almost certainly not listening
 
 	fl, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -343,7 +327,7 @@ func TestBackendConnectionFailure(t *testing.T) {
 			servicePortName: makeServicePortName("default", "fail-svc", "http"),
 			protocol:        v1.ProtocolTCP,
 			port:            nodePort,
-			endpoints:       []proxy.Endpoint{ep},
+			endpoints:       []string{ep},
 		},
 	})
 
@@ -382,7 +366,7 @@ func TestShutdown(t *testing.T) {
 			servicePortName: makeServicePortName("default", fmt.Sprintf("svc-%d", port), "http"),
 			protocol:        v1.ProtocolTCP,
 			port:            port,
-			endpoints:       []proxy.Endpoint{&testEndpoint{ip: "127.0.0.1", port: 1}},
+			endpoints:       []string{"127.0.0.1:1"},
 		}
 	}
 
@@ -413,7 +397,7 @@ func TestShutdownClosesInFlightConnections(t *testing.T) {
 	defer backend.Close() //nolint:errcheck
 	backendPort := backend.Addr().(*net.TCPAddr).Port
 
-	ep := &testEndpoint{ip: "127.0.0.1", port: backendPort}
+	ep := net.JoinHostPort("127.0.0.1", strconv.Itoa(backendPort))
 
 	fl, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -428,7 +412,7 @@ func TestShutdownClosesInFlightConnections(t *testing.T) {
 			servicePortName: makeServicePortName("default", "inflight-svc", "http"),
 			protocol:        v1.ProtocolTCP,
 			port:            nodePort,
-			endpoints:       []proxy.Endpoint{ep},
+			endpoints:       []string{ep},
 		},
 	})
 
@@ -482,7 +466,7 @@ func TestIPv6(t *testing.T) {
 	defer backend.Close() //nolint:errcheck
 	backendPort := backend.Addr().(*net.TCPAddr).Port
 
-	ep := &testEndpoint{ip: "::1", port: backendPort}
+	ep := net.JoinHostPort("::1", strconv.Itoa(backendPort))
 
 	fl, err := net.Listen("tcp6", "[::1]:0")
 	if err != nil {
@@ -497,7 +481,7 @@ func TestIPv6(t *testing.T) {
 			servicePortName: makeServicePortName("default", "v6-svc", "http"),
 			protocol:        v1.ProtocolTCP,
 			port:            nodePort,
-			endpoints:       []proxy.Endpoint{ep},
+			endpoints:       []string{ep},
 		},
 	})
 
@@ -536,7 +520,7 @@ func TestNoEndpoints(t *testing.T) {
 			servicePortName: makeServicePortName("default", "empty-svc", "http"),
 			protocol:        v1.ProtocolTCP,
 			port:            nodePort,
-			endpoints:       []proxy.Endpoint{},
+			endpoints:       []string{},
 		},
 	})
 
@@ -555,7 +539,7 @@ func TestNoEndpoints(t *testing.T) {
 
 // startPortReportingServer starts a TCP server that sends its own port number
 // to each connecting client.
-func startPortReportingServer(t *testing.T, network string) (net.Listener, int, proxy.Endpoint) {
+func startPortReportingServer(t *testing.T, network string) (net.Listener, int, string) {
 	t.Helper()
 	addr := "127.0.0.1:0"
 	if network == "tcp6" {
@@ -582,7 +566,7 @@ func startPortReportingServer(t *testing.T, network string) (net.Listener, int, 
 	if network == "tcp6" {
 		ip = "::1"
 	}
-	return l, port, &testEndpoint{ip: ip, port: port}
+	return l, port, net.JoinHostPort(ip, strconv.Itoa(port))
 }
 
 func readBackendID(t *testing.T, network, addr string) string {
@@ -606,7 +590,7 @@ func TestSessionAffinity_PinsToSingleEndpoint(t *testing.T) {
 
 	// Start 3 backends; each reports its own port
 	var backends []net.Listener
-	var endpoints []proxy.Endpoint
+	var endpoints []string
 	for range 3 {
 		b, _, ep := startPortReportingServer(t, "tcp4")
 		backends = append(backends, b)
@@ -652,9 +636,9 @@ func TestSessionAffinity_PinnedEndpointRemoved(t *testing.T) {
 	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
 	defer p.Shutdown()
 
-	b1, _, ep1 := startPortReportingServer(t, "tcp4")
+	b1, port1, ep1 := startPortReportingServer(t, "tcp4")
 	defer b1.Close() //nolint:errcheck
-	b2, _, ep2 := startPortReportingServer(t, "tcp4")
+	b2, port2, ep2 := startPortReportingServer(t, "tcp4")
 	defer b2.Close() //nolint:errcheck
 
 	fl, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -671,7 +655,7 @@ func TestSessionAffinity_PinnedEndpointRemoved(t *testing.T) {
 			servicePortName:     svcName,
 			protocol:            v1.ProtocolTCP,
 			port:                nodePort,
-			endpoints:           []proxy.Endpoint{ep1, ep2},
+			endpoints:           []string{ep1, ep2},
 			sessionAffinityType: v1.ServiceAffinityClientIP,
 			stickyMaxAgeSeconds: 10800,
 		},
@@ -682,23 +666,23 @@ func TestSessionAffinity_PinnedEndpointRemoved(t *testing.T) {
 
 	// Drop the pinned endpoint from the set; remaining traffic must flow to
 	// the surviving endpoint rather than silently dropping.
-	remaining := ep2
-	if pinned == fmt.Sprintf("port:%d", ep2.(*testEndpoint).port) {
-		remaining = ep1
+	remaining, remainingPort := ep2, port2
+	if pinned == fmt.Sprintf("port:%d", port2) {
+		remaining, remainingPort = ep1, port1
 	}
 	p.SyncNodePorts(map[string]*nodePortSpec{
 		key: {
 			servicePortName:     svcName,
 			protocol:            v1.ProtocolTCP,
 			port:                nodePort,
-			endpoints:           []proxy.Endpoint{remaining},
+			endpoints:           []string{remaining},
 			sessionAffinityType: v1.ServiceAffinityClientIP,
 			stickyMaxAgeSeconds: 10800,
 		},
 	})
 
 	got := readBackendID(t, "tcp4", addr)
-	want := fmt.Sprintf("port:%d", remaining.(*testEndpoint).port)
+	want := fmt.Sprintf("port:%d", remainingPort)
 	if got != want {
 		t.Fatalf("After pinned endpoint removal: expected %q, got %q", want, got)
 	}
@@ -710,7 +694,7 @@ func TestSessionAffinity_Expires(t *testing.T) {
 	defer p.Shutdown()
 
 	var backends []net.Listener
-	var endpoints []proxy.Endpoint
+	var endpoints []string
 	for range 3 {
 		b, _, ep := startPortReportingServer(t, "tcp4")
 		backends = append(backends, b)
