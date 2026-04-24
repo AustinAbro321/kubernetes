@@ -310,7 +310,7 @@ func NewProxier(ctx context.Context,
 	// IPv6 has no route_localnet; fall back to a userspace proxy when the user
 	// opts in. IPv4 is handled by kernel iptables and respects the flag directly.
 	if ipFamily == v1.IPv6Protocol && localhostNodePorts && nodePortAddresses.ContainsLoopback() {
-		proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ipFamily, logger)
+		proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ctx, ipFamily)
 	}
 
 	logger.V(2).Info("Iptables sync params", "minSyncPeriod", minSyncPeriod, "syncPeriod", syncPeriod, "maxSyncPeriod", proxyutil.FullSyncPeriod)

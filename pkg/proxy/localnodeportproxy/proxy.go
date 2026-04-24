@@ -69,6 +69,7 @@ func (s *NodePortSpec) affinityTimeout() time.Duration {
 // for NodePort services that cannot be handled by kernel-space proxying
 // (e.g. nftables mode, IPv6, IPVS).
 type LocalNodePortProxy struct {
+	ctx      context.Context
 	logger   klog.Logger
 	listenIP string
 
@@ -77,14 +78,16 @@ type LocalNodePortProxy struct {
 	active map[string]*nodePortListener
 }
 
-// NewLocalNodePortProxy creates a new proxy for the given IP family.
-func NewLocalNodePortProxy(ipFamily v1.IPFamily, logger klog.Logger) *LocalNodePortProxy {
+// NewLocalNodePortProxy creates a new proxy for the given IP family. Each
+// listener's goroutines derive from ctx, so cancelling it tears them down.
+func NewLocalNodePortProxy(ctx context.Context, ipFamily v1.IPFamily) *LocalNodePortProxy {
 	listenIP := "127.0.0.1"
 	if ipFamily == v1.IPv6Protocol {
 		listenIP = "::1"
 	}
 	return &LocalNodePortProxy{
-		logger:   logger,
+		ctx:      ctx,
+		logger:   klog.FromContext(ctx),
 		listenIP: listenIP,
 		active:   make(map[string]*nodePortListener),
 	}
@@ -158,7 +161,7 @@ func (p *LocalNodePortProxy) newNodePortListener(spec *NodePortSpec) (*nodePortL
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(p.ctx)
 	l := &nodePortListener{
 		protocol:        spec.Protocol,
 		port:            spec.NodePort,

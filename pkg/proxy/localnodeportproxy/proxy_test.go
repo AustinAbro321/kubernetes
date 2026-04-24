@@ -63,8 +63,8 @@ func startTCPEchoServer(t *testing.T, network, addr string) net.Listener {
 }
 
 func TestSyncNodePorts_AddAndRemove(t *testing.T) {
-	logger, _ := ktesting.NewTestContext(t)
-	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+	_, ctx := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
 	defer p.Shutdown()
 
 	svcName := makeServicePortName("default", "test-svc", "http")
@@ -132,8 +132,8 @@ func TestSyncNodePorts_AddAndRemove(t *testing.T) {
 }
 
 func TestSyncNodePorts_UpdateEndpoints(t *testing.T) {
-	logger, _ := ktesting.NewTestContext(t)
-	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+	_, ctx := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
 	defer p.Shutdown()
 
 	// Start two backend servers
@@ -199,8 +199,8 @@ func TestSyncNodePorts_UpdateEndpoints(t *testing.T) {
 }
 
 func TestSyncNodePorts_SkipUDP(t *testing.T) {
-	logger, _ := ktesting.NewTestContext(t)
-	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+	_, ctx := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
 	defer p.Shutdown()
 
 	svcName := makeServicePortName("default", "udp-svc", "dns")
@@ -218,8 +218,8 @@ func TestSyncNodePorts_SkipUDP(t *testing.T) {
 }
 
 func TestRoundRobinEndpointSelection(t *testing.T) {
-	logger, _ := ktesting.NewTestContext(t)
-	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+	_, ctx := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
 	defer p.Shutdown()
 
 	// Start 3 backend servers that respond with their port
@@ -294,8 +294,8 @@ func TestRoundRobinEndpointSelection(t *testing.T) {
 }
 
 func TestBackendConnectionFailure(t *testing.T) {
-	logger, _ := ktesting.NewTestContext(t)
-	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+	_, ctx := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
 	defer p.Shutdown()
 
 	// Use an endpoint that isn't listening
@@ -330,8 +330,8 @@ func TestBackendConnectionFailure(t *testing.T) {
 }
 
 func TestShutdown(t *testing.T) {
-	logger, _ := ktesting.NewTestContext(t)
-	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+	_, ctx := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
 
 	// Create multiple listeners
 	var ports []int
@@ -373,8 +373,8 @@ func TestShutdown(t *testing.T) {
 }
 
 func TestShutdownClosesInFlightConnections(t *testing.T) {
-	logger, _ := ktesting.NewTestContext(t)
-	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+	_, ctx := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
 
 	backend := startTCPEchoServer(t, "tcp4", "127.0.0.1:0")
 	defer backend.Close() //nolint:errcheck
@@ -430,8 +430,8 @@ func TestIPv6(t *testing.T) {
 	}
 	_ = l.Close()
 
-	logger, _ := ktesting.NewTestContext(t)
-	p := NewLocalNodePortProxy(v1.IPv6Protocol, logger)
+	_, ctx := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(ctx, v1.IPv6Protocol)
 	defer p.Shutdown()
 
 	if p.listenIP != "::1" {
@@ -477,8 +477,8 @@ func TestIPv6(t *testing.T) {
 }
 
 func TestNoEndpoints(t *testing.T) {
-	logger, _ := ktesting.NewTestContext(t)
-	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+	_, ctx := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
 	defer p.Shutdown()
 
 	fl, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -555,8 +555,8 @@ func readBackendID(t *testing.T, network, addr string) string {
 }
 
 func TestSessionAffinity_PinsToSingleEndpoint(t *testing.T) {
-	logger, _ := ktesting.NewTestContext(t)
-	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+	_, ctx := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
 	defer p.Shutdown()
 
 	// Start 3 backends; each reports its own port
@@ -600,8 +600,8 @@ func TestSessionAffinity_PinsToSingleEndpoint(t *testing.T) {
 }
 
 func TestSessionAffinity_PinnedEndpointRemoved(t *testing.T) {
-	logger, _ := ktesting.NewTestContext(t)
-	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+	_, ctx := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
 	defer p.Shutdown()
 
 	b1, port1, ep1 := startPortReportingServer(t, "tcp4")
@@ -652,8 +652,8 @@ func TestSessionAffinity_PinnedEndpointRemoved(t *testing.T) {
 }
 
 func TestSessionAffinity_Expires(t *testing.T) {
-	logger, _ := ktesting.NewTestContext(t)
-	p := NewLocalNodePortProxy(v1.IPv4Protocol, logger)
+	_, ctx := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
 	defer p.Shutdown()
 
 	var backends []net.Listener

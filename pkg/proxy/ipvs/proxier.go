@@ -402,7 +402,7 @@ func NewProxier(
 	// IPVS drops localhost-sourced traffic in the service chain, so use a
 	// userspace proxy to handle localhost NodePort traffic.
 	if nodePortAddresses.ContainsLoopback() {
-		proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ipFamily, logger)
+		proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ctx, ipFamily)
 	}
 
 	// initialize ipsetList with all sets we needed
