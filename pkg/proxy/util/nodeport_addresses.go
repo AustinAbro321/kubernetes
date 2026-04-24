@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"net"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	netutils "k8s.io/utils/net"
 )
 
@@ -68,7 +68,7 @@ func NewNodePortAddresses(family v1.IPFamily, cidrStrings []string) *NodePortAdd
 				npa.containsIPv4Loopback = true
 			}
 		} else {
-			if cidr.IP.IsLoopback() || cidr.Contains(net.IPv6loopback) {
+			if cidr.Contains(net.IPv6loopback) {
 				npa.containsIPv6Loopback = true
 			}
 		}
