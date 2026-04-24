@@ -176,10 +176,14 @@ func (p *LocalNodePortProxy) newNodePortListener(spec *NodePortSpec) (*nodePortL
 }
 
 type nodePortListener struct {
+	// Immutable after construction.
 	protocol v1.Protocol
 	port     int
 	logger   klog.Logger
+	listener net.Listener
+	cancel   context.CancelFunc
 
+	// mu guards the endpoint-selection state below
 	mu        sync.Mutex
 	endpoints []string
 	nextIndex int
@@ -191,9 +195,6 @@ type nodePortListener struct {
 	affinityTimeout time.Duration
 	pinnedEndpoint  string // "ip:port" of the currently pinned endpoint, empty if none
 	pinnedLastUsed  time.Time
-
-	listener net.Listener
-	cancel   context.CancelFunc
 }
 
 func (l *nodePortListener) acceptLoop(ctx context.Context) {
