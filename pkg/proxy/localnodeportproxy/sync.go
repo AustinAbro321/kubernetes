@@ -31,8 +31,8 @@ func BuildDesiredNodePorts(
 	endpointsMap proxy.EndpointsMap,
 	nodeName string,
 	topologyLabels map[string]string,
-) map[string]*NodePortSpec {
-	desired := make(map[string]*NodePortSpec)
+) map[string]*nodePortSpec {
+	desired := make(map[string]*nodePortSpec)
 	for svcName, svcInfo := range svcPortMap {
 		if svcInfo.NodePort() == 0 {
 			continue
@@ -52,13 +52,13 @@ func BuildDesiredNodePorts(
 		}
 		protocol := strings.ToLower(string(svcInfo.Protocol()))
 		key := fmt.Sprintf("%s/%d", protocol, svcInfo.NodePort())
-		desired[key] = &NodePortSpec{
-			ServicePortName:     svcName,
-			Protocol:            svcInfo.Protocol(),
-			Port:                svcInfo.NodePort(),
-			Endpoints:           endpoints,
-			SessionAffinityType: svcInfo.SessionAffinityType(),
-			StickyMaxAgeSeconds: svcInfo.StickyMaxAgeSeconds(),
+		desired[key] = &nodePortSpec{
+			servicePortName:     svcName,
+			protocol:            svcInfo.Protocol(),
+			port:                svcInfo.NodePort(),
+			endpoints:           endpoints,
+			sessionAffinityType: svcInfo.SessionAffinityType(),
+			stickyMaxAgeSeconds: svcInfo.StickyMaxAgeSeconds(),
 		}
 	}
 	return desired

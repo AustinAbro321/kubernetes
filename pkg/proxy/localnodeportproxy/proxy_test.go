@@ -101,12 +101,12 @@ func TestSyncNodePorts_AddAndRemove(t *testing.T) {
 	_ = freeListener.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
-	desired := map[string]*NodePortSpec{
+	desired := map[string]*nodePortSpec{
 		key: {
-			ServicePortName: svcName,
-			Protocol:        v1.ProtocolTCP,
-			Port:            nodePort,
-			Endpoints:       []proxy.Endpoint{ep},
+			servicePortName: svcName,
+			protocol:        v1.ProtocolTCP,
+			port:            nodePort,
+			endpoints:       []proxy.Endpoint{ep},
 		},
 	}
 
@@ -137,7 +137,7 @@ func TestSyncNodePorts_AddAndRemove(t *testing.T) {
 	}
 
 	// Remove the NodePort
-	p.SyncNodePorts(map[string]*NodePortSpec{})
+	p.SyncNodePorts(map[string]*nodePortSpec{})
 	if len(p.active) != 0 {
 		t.Fatalf("Expected 0 active listeners after removal, got %d", len(p.active))
 	}
@@ -176,12 +176,12 @@ func TestSyncNodePorts_UpdateEndpoints(t *testing.T) {
 	key := fmt.Sprintf("tcp/%d", nodePort)
 
 	// Start with ep1 only
-	p.SyncNodePorts(map[string]*NodePortSpec{
+	p.SyncNodePorts(map[string]*nodePortSpec{
 		key: {
-			ServicePortName: svcName,
-			Protocol:        v1.ProtocolTCP,
-			Port:            nodePort,
-			Endpoints:       []proxy.Endpoint{ep1},
+			servicePortName: svcName,
+			protocol:        v1.ProtocolTCP,
+			port:            nodePort,
+			endpoints:       []proxy.Endpoint{ep1},
 		},
 	})
 
@@ -190,12 +190,12 @@ func TestSyncNodePorts_UpdateEndpoints(t *testing.T) {
 	}
 
 	// Update to ep2
-	p.SyncNodePorts(map[string]*NodePortSpec{
+	p.SyncNodePorts(map[string]*nodePortSpec{
 		key: {
-			ServicePortName: svcName,
-			Protocol:        v1.ProtocolTCP,
-			Port:            nodePort,
-			Endpoints:       []proxy.Endpoint{ep2},
+			servicePortName: svcName,
+			protocol:        v1.ProtocolTCP,
+			port:            nodePort,
+			endpoints:       []proxy.Endpoint{ep2},
 		},
 	})
 
@@ -229,12 +229,12 @@ func TestSyncNodePorts_SkipUDP(t *testing.T) {
 
 	svcName := makeServicePortName("default", "udp-svc", "dns")
 
-	p.SyncNodePorts(map[string]*NodePortSpec{
+	p.SyncNodePorts(map[string]*nodePortSpec{
 		"udp/30053": {
-			ServicePortName: svcName,
-			Protocol:        v1.ProtocolUDP,
-			Port:            30053,
-			Endpoints:       []proxy.Endpoint{&testEndpoint{ip: "10.0.0.1", port: 53}},
+			servicePortName: svcName,
+			protocol:        v1.ProtocolUDP,
+			port:            30053,
+			endpoints:       []proxy.Endpoint{&testEndpoint{ip: "10.0.0.1", port: 53}},
 		},
 	})
 
@@ -287,12 +287,12 @@ func TestRoundRobinEndpointSelection(t *testing.T) {
 	_ = fl.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
-	p.SyncNodePorts(map[string]*NodePortSpec{
+	p.SyncNodePorts(map[string]*nodePortSpec{
 		key: {
-			ServicePortName: makeServicePortName("default", "rr-svc", "http"),
-			Protocol:        v1.ProtocolTCP,
-			Port:            nodePort,
-			Endpoints:       endpoints,
+			servicePortName: makeServicePortName("default", "rr-svc", "http"),
+			protocol:        v1.ProtocolTCP,
+			port:            nodePort,
+			endpoints:       endpoints,
 		},
 	})
 
@@ -338,12 +338,12 @@ func TestBackendConnectionFailure(t *testing.T) {
 	_ = fl.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
-	p.SyncNodePorts(map[string]*NodePortSpec{
+	p.SyncNodePorts(map[string]*nodePortSpec{
 		key: {
-			ServicePortName: makeServicePortName("default", "fail-svc", "http"),
-			Protocol:        v1.ProtocolTCP,
-			Port:            nodePort,
-			Endpoints:       []proxy.Endpoint{ep},
+			servicePortName: makeServicePortName("default", "fail-svc", "http"),
+			protocol:        v1.ProtocolTCP,
+			port:            nodePort,
+			endpoints:       []proxy.Endpoint{ep},
 		},
 	})
 
@@ -367,7 +367,7 @@ func TestShutdown(t *testing.T) {
 
 	// Create multiple listeners
 	var ports []int
-	desired := make(map[string]*NodePortSpec)
+	desired := make(map[string]*nodePortSpec)
 	for range 3 {
 		fl, err := net.Listen("tcp4", "127.0.0.1:0")
 		if err != nil {
@@ -378,11 +378,11 @@ func TestShutdown(t *testing.T) {
 		ports = append(ports, port)
 
 		key := fmt.Sprintf("tcp/%d", port)
-		desired[key] = &NodePortSpec{
-			ServicePortName: makeServicePortName("default", fmt.Sprintf("svc-%d", port), "http"),
-			Protocol:        v1.ProtocolTCP,
-			Port:            port,
-			Endpoints:       []proxy.Endpoint{&testEndpoint{ip: "127.0.0.1", port: 1}},
+		desired[key] = &nodePortSpec{
+			servicePortName: makeServicePortName("default", fmt.Sprintf("svc-%d", port), "http"),
+			protocol:        v1.ProtocolTCP,
+			port:            port,
+			endpoints:       []proxy.Endpoint{&testEndpoint{ip: "127.0.0.1", port: 1}},
 		}
 	}
 
@@ -423,12 +423,12 @@ func TestShutdownClosesInFlightConnections(t *testing.T) {
 	_ = fl.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
-	p.SyncNodePorts(map[string]*NodePortSpec{
+	p.SyncNodePorts(map[string]*nodePortSpec{
 		key: {
-			ServicePortName: makeServicePortName("default", "inflight-svc", "http"),
-			Protocol:        v1.ProtocolTCP,
-			Port:            nodePort,
-			Endpoints:       []proxy.Endpoint{ep},
+			servicePortName: makeServicePortName("default", "inflight-svc", "http"),
+			protocol:        v1.ProtocolTCP,
+			port:            nodePort,
+			endpoints:       []proxy.Endpoint{ep},
 		},
 	})
 
@@ -492,12 +492,12 @@ func TestIPv6(t *testing.T) {
 	_ = fl.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
-	p.SyncNodePorts(map[string]*NodePortSpec{
+	p.SyncNodePorts(map[string]*nodePortSpec{
 		key: {
-			ServicePortName: makeServicePortName("default", "v6-svc", "http"),
-			Protocol:        v1.ProtocolTCP,
-			Port:            nodePort,
-			Endpoints:       []proxy.Endpoint{ep},
+			servicePortName: makeServicePortName("default", "v6-svc", "http"),
+			protocol:        v1.ProtocolTCP,
+			port:            nodePort,
+			endpoints:       []proxy.Endpoint{ep},
 		},
 	})
 
@@ -531,12 +531,12 @@ func TestNoEndpoints(t *testing.T) {
 	_ = fl.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
-	p.SyncNodePorts(map[string]*NodePortSpec{
+	p.SyncNodePorts(map[string]*nodePortSpec{
 		key: {
-			ServicePortName: makeServicePortName("default", "empty-svc", "http"),
-			Protocol:        v1.ProtocolTCP,
-			Port:            nodePort,
-			Endpoints:       []proxy.Endpoint{},
+			servicePortName: makeServicePortName("default", "empty-svc", "http"),
+			protocol:        v1.ProtocolTCP,
+			port:            nodePort,
+			endpoints:       []proxy.Endpoint{},
 		},
 	})
 
@@ -626,14 +626,14 @@ func TestSessionAffinity_PinsToSingleEndpoint(t *testing.T) {
 	_ = fl.Close()
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
-	p.SyncNodePorts(map[string]*NodePortSpec{
+	p.SyncNodePorts(map[string]*nodePortSpec{
 		key: {
-			ServicePortName:     makeServicePortName("default", "sticky-svc", "http"),
-			Protocol:            v1.ProtocolTCP,
-			Port:                nodePort,
-			Endpoints:           endpoints,
-			SessionAffinityType: v1.ServiceAffinityClientIP,
-			StickyMaxAgeSeconds: 10800,
+			servicePortName:     makeServicePortName("default", "sticky-svc", "http"),
+			protocol:            v1.ProtocolTCP,
+			port:                nodePort,
+			endpoints:           endpoints,
+			sessionAffinityType: v1.ServiceAffinityClientIP,
+			stickyMaxAgeSeconds: 10800,
 		},
 	})
 
@@ -666,14 +666,14 @@ func TestSessionAffinity_PinnedEndpointRemoved(t *testing.T) {
 
 	key := fmt.Sprintf("tcp/%d", nodePort)
 	svcName := makeServicePortName("default", "sticky-svc", "http")
-	p.SyncNodePorts(map[string]*NodePortSpec{
+	p.SyncNodePorts(map[string]*nodePortSpec{
 		key: {
-			ServicePortName:     svcName,
-			Protocol:            v1.ProtocolTCP,
-			Port:                nodePort,
-			Endpoints:           []proxy.Endpoint{ep1, ep2},
-			SessionAffinityType: v1.ServiceAffinityClientIP,
-			StickyMaxAgeSeconds: 10800,
+			servicePortName:     svcName,
+			protocol:            v1.ProtocolTCP,
+			port:                nodePort,
+			endpoints:           []proxy.Endpoint{ep1, ep2},
+			sessionAffinityType: v1.ServiceAffinityClientIP,
+			stickyMaxAgeSeconds: 10800,
 		},
 	})
 
@@ -686,14 +686,14 @@ func TestSessionAffinity_PinnedEndpointRemoved(t *testing.T) {
 	if pinned == fmt.Sprintf("port:%d", ep2.(*testEndpoint).port) {
 		remaining = ep1
 	}
-	p.SyncNodePorts(map[string]*NodePortSpec{
+	p.SyncNodePorts(map[string]*nodePortSpec{
 		key: {
-			ServicePortName:     svcName,
-			Protocol:            v1.ProtocolTCP,
-			Port:                nodePort,
-			Endpoints:           []proxy.Endpoint{remaining},
-			SessionAffinityType: v1.ServiceAffinityClientIP,
-			StickyMaxAgeSeconds: 10800,
+			servicePortName:     svcName,
+			protocol:            v1.ProtocolTCP,
+			port:                nodePort,
+			endpoints:           []proxy.Endpoint{remaining},
+			sessionAffinityType: v1.ServiceAffinityClientIP,
+			stickyMaxAgeSeconds: 10800,
 		},
 	})
 
@@ -732,14 +732,14 @@ func TestSessionAffinity_Expires(t *testing.T) {
 	// StickyMaxAgeSeconds is in seconds; we can't use fractional values via the
 	// public spec, so poke the listener directly after construction.
 	key := fmt.Sprintf("tcp/%d", nodePort)
-	p.SyncNodePorts(map[string]*NodePortSpec{
+	p.SyncNodePorts(map[string]*nodePortSpec{
 		key: {
-			ServicePortName:     makeServicePortName("default", "sticky-svc", "http"),
-			Protocol:            v1.ProtocolTCP,
-			Port:                nodePort,
-			Endpoints:           endpoints,
-			SessionAffinityType: v1.ServiceAffinityClientIP,
-			StickyMaxAgeSeconds: 10800,
+			servicePortName:     makeServicePortName("default", "sticky-svc", "http"),
+			protocol:            v1.ProtocolTCP,
+			port:                nodePort,
+			endpoints:           endpoints,
+			sessionAffinityType: v1.ServiceAffinityClientIP,
+			stickyMaxAgeSeconds: 10800,
 		},
 	})
 

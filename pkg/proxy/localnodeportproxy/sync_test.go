@@ -144,14 +144,14 @@ func TestBuildDesiredNodePorts_ReadyEndpoint(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected key tcp/30080, got %+v", got)
 	}
-	if spec.Port != 30080 {
-		t.Errorf("spec.Port = %d, want 30080", spec.Port)
+	if spec.port != 30080 {
+		t.Errorf("spec.port = %d, want 30080", spec.port)
 	}
-	if spec.Protocol != v1.ProtocolTCP {
-		t.Errorf("spec.Protocol = %s, want TCP", spec.Protocol)
+	if spec.protocol != v1.ProtocolTCP {
+		t.Errorf("spec.protocol = %s, want TCP", spec.protocol)
 	}
-	if len(spec.Endpoints) != 1 || spec.Endpoints[0].IP() != "10.0.0.1" {
-		t.Errorf("unexpected endpoints: %+v", spec.Endpoints)
+	if len(spec.endpoints) != 1 || spec.endpoints[0].IP() != "10.0.0.1" {
+		t.Errorf("unexpected endpoints: %+v", spec.endpoints)
 	}
 }
 
@@ -196,8 +196,8 @@ func TestBuildDesiredNodePorts_ExternalPolicyLocal_WithLocalEndpoint(t *testing.
 	if !ok {
 		t.Fatalf("Expected key tcp/30080, got %+v", got)
 	}
-	if len(spec.Endpoints) != 1 || spec.Endpoints[0].IP() != "10.0.0.1" {
-		t.Fatalf("ExternalPolicyLocal: expected only the local endpoint 10.0.0.1, got %+v", spec.Endpoints)
+	if len(spec.endpoints) != 1 || spec.endpoints[0].IP() != "10.0.0.1" {
+		t.Fatalf("ExternalPolicyLocal: expected only the local endpoint 10.0.0.1, got %+v", spec.endpoints)
 	}
 }
 
@@ -234,11 +234,11 @@ func TestBuildDesiredNodePorts_MixedTCPAndUDP(t *testing.T) {
 	got := BuildDesiredNodePorts(svcMap, epMap, testNode, nil)
 
 	tcp, ok := got["tcp/30080"]
-	if !ok || tcp.Protocol != v1.ProtocolTCP {
+	if !ok || tcp.protocol != v1.ProtocolTCP {
 		t.Errorf("Expected tcp/30080 with TCP protocol, got %+v", got)
 	}
 	udp, ok := got["udp/30053"]
-	if !ok || udp.Protocol != v1.ProtocolUDP {
+	if !ok || udp.protocol != v1.ProtocolUDP {
 		t.Errorf("Expected udp/30053 with UDP protocol, got %+v", got)
 	}
 }
@@ -260,11 +260,11 @@ func TestBuildDesiredNodePorts_SessionAffinityPropagated(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected key tcp/30080, got %+v", got)
 	}
-	if spec.SessionAffinityType != v1.ServiceAffinityClientIP {
-		t.Errorf("SessionAffinityType = %q, want ClientIP", spec.SessionAffinityType)
+	if spec.sessionAffinityType != v1.ServiceAffinityClientIP {
+		t.Errorf("sessionAffinityType = %q, want ClientIP", spec.sessionAffinityType)
 	}
-	if spec.StickyMaxAgeSeconds != 7200 {
-		t.Errorf("StickyMaxAgeSeconds = %d, want 7200", spec.StickyMaxAgeSeconds)
+	if spec.stickyMaxAgeSeconds != 7200 {
+		t.Errorf("stickyMaxAgeSeconds = %d, want 7200", spec.stickyMaxAgeSeconds)
 	}
 }
 
@@ -282,11 +282,11 @@ func TestBuildDesiredNodePorts_NoAffinityYieldsZeroTimeout(t *testing.T) {
 	if spec == nil {
 		t.Fatal("expected entry")
 	}
-	if spec.SessionAffinityType == v1.ServiceAffinityClientIP {
+	if spec.sessionAffinityType == v1.ServiceAffinityClientIP {
 		t.Errorf("unexpected ClientIP affinity when service has none")
 	}
-	if spec.StickyMaxAgeSeconds != 0 {
-		t.Errorf("StickyMaxAgeSeconds = %d, want 0", spec.StickyMaxAgeSeconds)
+	if spec.stickyMaxAgeSeconds != 0 {
+		t.Errorf("stickyMaxAgeSeconds = %d, want 0", spec.stickyMaxAgeSeconds)
 	}
 	if got := spec.affinityTimeout(); got != 0 {
 		t.Errorf("affinityTimeout() = %v, want 0 for non-ClientIP service", got)
@@ -320,7 +320,7 @@ func TestBuildDesiredNodePorts_NodePortCollision(t *testing.T) {
 	if spec == nil {
 		t.Fatalf("expected tcp/30080 entry, got %+v", got)
 	}
-	name := spec.ServicePortName.Name
+	name := spec.servicePortName.Name
 	if name != "svc-a" && name != "svc-b" {
 		t.Errorf("winning entry should be svc-a or svc-b, got %q", name)
 	}
