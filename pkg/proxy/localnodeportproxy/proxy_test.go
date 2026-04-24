@@ -198,6 +198,43 @@ func TestSyncNodePorts_UpdateEndpoints(t *testing.T) {
 	}
 }
 
+func TestSyncNodePorts_EndpointsGoingToZeroTearsDownListener(t *testing.T) {
+	_, ctx := ktesting.NewTestContext(t)
+	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
+	defer p.Shutdown()
+
+	backend := startTCPEchoServer(t, "tcp4", "127.0.0.1:0")
+	defer backend.Close() //nolint:errcheck
+	ep := net.JoinHostPort("127.0.0.1", strconv.Itoa(backend.Addr().(*net.TCPAddr).Port))
+
+	fl, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodePort := fl.Addr().(*net.TCPAddr).Port
+	_ = fl.Close()
+
+	spec := NodePortSpec{
+		ServicePortName: makeServicePortName("default", "svc", "http"),
+		Protocol:        v1.ProtocolTCP,
+		NodePort:        nodePort,
+		Endpoints:       []string{ep},
+	}
+	p.SyncNodePorts([]NodePortSpec{spec})
+	if len(p.active) != 1 {
+		t.Fatalf("Expected 1 active listener, got %d", len(p.active))
+	}
+
+	spec.Endpoints = nil
+	p.SyncNodePorts([]NodePortSpec{spec})
+	if len(p.active) != 0 {
+		t.Fatalf("Expected listener to be torn down when endpoints drain, got %d active", len(p.active))
+	}
+	if _, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", nodePort), 500*time.Millisecond); err == nil {
+		t.Fatal("Expected dial to fail after endpoints drain")
+	}
+}
+
 func TestSyncNodePorts_SkipUDP(t *testing.T) {
 	_, ctx := ktesting.NewTestContext(t)
 	p := NewLocalNodePortProxy(ctx, v1.IPv4Protocol)
@@ -495,16 +532,13 @@ func TestNoEndpoints(t *testing.T) {
 		Endpoints:       []string{},
 	}})
 
-	// Should still create listener, but connections get closed immediately
-	conn, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", nodePort), 2*time.Second)
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
+	if len(p.active) != 0 {
+		t.Fatalf("Expected no listener for spec with no endpoints, got %d active", len(p.active))
 	}
-	buf, _ := io.ReadAll(conn)
-	_ = conn.Close()
 
-	if len(buf) != 0 {
-		t.Errorf("Expected empty response with no endpoints, got %q", string(buf))
+	// Connection must be refused (no listener), not accepted-and-closed.
+	if _, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", nodePort), 500*time.Millisecond); err == nil {
+		t.Fatal("Expected dial to fail when no endpoints are present")
 	}
 }
 

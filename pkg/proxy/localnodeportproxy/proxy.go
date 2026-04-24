@@ -97,6 +97,9 @@ func (p *LocalNodePortProxy) SyncNodePorts(desired []NodePortSpec) {
 	byKey := make(map[string]*NodePortSpec, len(desired))
 	for i := range desired {
 		spec := &desired[i]
+		if len(spec.Endpoints) == 0 {
+			continue
+		}
 		key := nodePortKey(spec.Protocol, spec.NodePort)
 		byKey[key] = spec
 	}
