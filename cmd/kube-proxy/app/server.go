@@ -233,10 +233,10 @@ func newProxyServer(ctx context.Context, config *kubeproxyconfig.KubeProxyConfig
 	if len(config.NodePortAddresses) == 1 && config.NodePortAddresses[0] == kubeproxyconfig.NodePortAddressesPrimary {
 		var nodePortAddresses []string
 		if nodeIP := s.NodeIPs[v1.IPv4Protocol]; nodeIP != nil && !nodeIP.IsLoopback() {
-			nodePortAddresses = append(nodePortAddresses, fmt.Sprintf("%s/32", nodeIP.String()), "127.0.0.1/32")
+			nodePortAddresses = append(nodePortAddresses, fmt.Sprintf("%s/32", nodeIP.String()))
 		}
 		if nodeIP := s.NodeIPs[v1.IPv6Protocol]; nodeIP != nil && !nodeIP.IsLoopback() {
-			nodePortAddresses = append(nodePortAddresses, fmt.Sprintf("%s/128", nodeIP.String()), "::1/128")
+			nodePortAddresses = append(nodePortAddresses, fmt.Sprintf("%s/128", nodeIP.String()))
 		}
 		config.NodePortAddresses = nodePortAddresses
 	}

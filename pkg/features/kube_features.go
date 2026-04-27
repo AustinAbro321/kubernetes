@@ -1661,7 +1661,8 @@ var defaultVersionedKubernetesFeatureGates = map[featuregate.Feature]featuregate
 	},
 
 	LocalhostNodePortUserspaceProxy: {
-		{Version: version.MustParse("1.37"), Default: false, PreRelease: featuregate.Alpha},
+		// TODO, I probably need to set this to 1.37
+		{Version: version.MustParse("1.36"), Default: false, PreRelease: featuregate.Alpha},
 	},
 
 	LogarithmicScaleDown: {
