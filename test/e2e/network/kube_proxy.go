@@ -404,7 +404,7 @@ var _ = common.SIGDescribe("KubeProxy", func() {
 		return fmt.Sprintf("http://127.0.0.1:%d%s", port, path)
 	}
 
-	ginkgo.It("should proxy localhost NodePort traffic to backends across nodes", func(ctx context.Context) {
+	framework.It("should proxy localhost NodePort traffic to backends across nodes", feature.LocalhostNodePortUserspaceProxy, func(ctx context.Context) {
 		cs := fr.ClientSet
 		ns := fr.Namespace.Name
 
@@ -481,7 +481,7 @@ var _ = common.SIGDescribe("KubeProxy", func() {
 		}
 	})
 
-	ginkgo.It("should honor sessionAffinity=ClientIP for localhost NodePort", func(ctx context.Context) {
+	framework.It("should honor sessionAffinity=ClientIP for localhost NodePort", feature.LocalhostNodePortUserspaceProxy, func(ctx context.Context) {
 		cs := fr.ClientSet
 		ns := fr.Namespace.Name
 

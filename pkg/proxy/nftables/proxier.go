@@ -38,8 +38,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/proxy"
 	"k8s.io/kubernetes/pkg/proxy/conntrack"
 	"k8s.io/kubernetes/pkg/proxy/healthcheck"
@@ -276,7 +278,8 @@ func NewProxier(ctx context.Context,
 		hairpinConnections:  newNFTElementStorage("set", hairpinConnectionsSet),
 	}
 
-	if nodePortAddresses.ContainsLoopback() {
+	if nodePortAddresses.ContainsLoopback() &&
+		utilfeature.DefaultFeatureGate.Enabled(features.LocalhostNodePortUserspaceProxy) {
 		proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ctx, ipFamily)
 	}
 

@@ -237,6 +237,11 @@ var (
 	// (Some distros don't include this in the kernel.)
 	KubeProxyNFAcct = framework.WithFeature(framework.ValidFeatures.Add("KubeProxyNFAcct"))
 
+	// Owner: sig-network
+	// Marks tests that require the LocalhostNodePortUserspaceProxy feature gate
+	// to be enabled in kube-proxy (KEP-6032).
+	LocalhostNodePortUserspaceProxy = framework.WithFeature(framework.ValidFeatures.Add("LocalhostNodePortUserspaceProxy"))
+
 	// Owner: sig-node
 	// Testing kubelet drop in KEP
 	KubeletConfigDropInDir = framework.WithFeature(framework.ValidFeatures.Add("KubeletConfigDropInDir"))

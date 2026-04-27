@@ -611,6 +611,14 @@ const (
 	// Relies on UserNamespacesSupport feature, and thus should follow it when setting defaults.
 	LocalStorageCapacityIsolationFSQuotaMonitoring featuregate.Feature = "LocalStorageCapacityIsolationFSQuotaMonitoring"
 
+	// owner: @austinabro321
+	// kep: https://kep.k8s.io/6032
+	//
+	// Enables a userspace proxy in kube-proxy that handles localhost-sourced
+	// traffic to NodePort services for proxy modes and IP families where the
+	// kernel data path cannot deliver it (nftables, IPv6, IPVS).
+	LocalhostNodePortUserspaceProxy featuregate.Feature = "LocalhostNodePortUserspaceProxy"
+
 	// owner: @damemi
 	//
 	// Enables scaling down replicas via logarithmic comparison of creation/ready timestamps
@@ -1652,6 +1660,10 @@ var defaultVersionedKubernetesFeatureGates = map[featuregate.Feature]featuregate
 		{Version: version.MustParse("1.31"), Default: false, PreRelease: featuregate.Beta},
 	},
 
+	LocalhostNodePortUserspaceProxy: {
+		{Version: version.MustParse("1.37"), Default: false, PreRelease: featuregate.Alpha},
+	},
+
 	LogarithmicScaleDown: {
 		{Version: version.MustParse("1.21"), Default: false, PreRelease: featuregate.Alpha},
 		{Version: version.MustParse("1.22"), Default: true, PreRelease: featuregate.Beta},
@@ -2549,6 +2561,8 @@ var defaultKubernetesFeatureGateDependencies = map[featuregate.Feature][]feature
 	KubeletTracing: {},
 
 	LocalStorageCapacityIsolationFSQuotaMonitoring: {},
+
+	LocalhostNodePortUserspaceProxy: {},
 
 	LogarithmicScaleDown: {},
 
