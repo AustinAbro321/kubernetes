@@ -38,12 +38,15 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/proxy"
 	kubeproxyconfig "k8s.io/kubernetes/pkg/proxy/apis/config"
 	"k8s.io/kubernetes/pkg/proxy/conntrack"
 	"k8s.io/kubernetes/pkg/proxy/healthcheck"
+	"k8s.io/kubernetes/pkg/proxy/localnodeportproxy"
 	"k8s.io/kubernetes/pkg/proxy/metaproxier"
 	"k8s.io/kubernetes/pkg/proxy/metrics"
 	"k8s.io/kubernetes/pkg/proxy/runner"
@@ -193,6 +196,10 @@ type Proxier struct {
 	noEndpointNodePorts *nftElementStorage
 	serviceNodePorts    *nftElementStorage
 	hairpinConnections  *nftElementStorage
+
+	// localhostNodePortProxy handles userspace proxying of NodePorts on localhost
+	// when kernel-space proxying is not possible (e.g. no route_localnet).
+	localhostNodePortProxy *localnodeportproxy.LocalNodePortProxy
 }
 
 // Proxier implements proxy.Provider
@@ -263,6 +270,11 @@ func NewProxier(ctx context.Context,
 		noEndpointNodePorts: newNFTElementStorage("map", noEndpointNodePortsMap),
 		serviceNodePorts:    newNFTElementStorage("map", serviceNodePortsMap),
 		hairpinConnections:  newNFTElementStorage("set", hairpinConnectionsSet),
+	}
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.LocalhostNodePortUserspaceProxy) &&
+		nodePortAddresses.ContainsLoopback() {
+		proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ipFamily, logger)
 	}
 
 	logger.V(2).Info("NFTables sync params", "minSyncPeriod", minSyncPeriod, "syncPeriod", syncPeriod, "maxSyncPeriod", proxyutil.FullSyncPeriod)
@@ -534,7 +546,6 @@ func (proxier *Proxier) setupNFTables(tx *knftables.Transaction) {
 		}
 		for _, ip := range nodeIPs {
 			if ip.IsLoopback() {
-				proxier.logger.Error(nil, "--nodeport-addresses includes localhost but localhost NodePorts are not supported", "address", ip.String())
 				continue
 			}
 			tx.Add(&knftables.Element{
@@ -1759,6 +1770,11 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 	}
 	if err := proxier.serviceHealthServer.SyncEndpoints(proxier.endpointsMap.LocalReadyEndpoints()); err != nil {
 		proxier.logger.Error(err, "Error syncing healthcheck endpoints")
+	}
+
+	if proxier.localhostNodePortProxy != nil {
+		proxier.localhostNodePortProxy.SyncNodePorts(
+			localnodeportproxy.BuildDesiredNodePorts(proxier.svcPortMap, proxier.endpointsMap, proxier.nodeName, proxier.topologyLabels))
 	}
 
 	if endpointUpdateResult.ConntrackCleanupRequired {

@@ -37,15 +37,18 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/apimachinery/pkg/util/wait"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/tools/events"
 	utilsysctl "k8s.io/component-helpers/node/util/sysctl"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/proxy"
 	kubeproxyconfig "k8s.io/kubernetes/pkg/proxy/apis/config"
 	"k8s.io/kubernetes/pkg/proxy/conntrack"
 	"k8s.io/kubernetes/pkg/proxy/healthcheck"
 	utilipset "k8s.io/kubernetes/pkg/proxy/ipvs/ipset"
 	utilipvs "k8s.io/kubernetes/pkg/proxy/ipvs/util"
+	"k8s.io/kubernetes/pkg/proxy/localnodeportproxy"
 	"k8s.io/kubernetes/pkg/proxy/metaproxier"
 	"k8s.io/kubernetes/pkg/proxy/metrics"
 	"k8s.io/kubernetes/pkg/proxy/runner"
@@ -233,6 +236,11 @@ type Proxier struct {
 	lbNoNodeAccessIPPortProtocolEntries []*utilipset.Entry
 
 	logger klog.Logger
+
+	// localhostNodePortProxy handles userspace proxying of NodePorts on localhost.
+	// IPVS drops localhost-sourced traffic in the service chain, so a userspace
+	// proxy on loopback is needed for both IPv4 and IPv6.
+	localhostNodePortProxy *localnodeportproxy.LocalNodePortProxy
 }
 
 // Proxier implements proxy.Provider
@@ -377,6 +385,13 @@ func NewProxier(
 		gracefuldeleteManager: NewGracefulTerminationManager(ipvs),
 		logger:                logger,
 	}
+	// IPVS drops localhost-sourced traffic in the service chain, so use a
+	// userspace proxy to handle localhost NodePort traffic.
+	if utilfeature.DefaultFeatureGate.Enabled(features.LocalhostNodePortUserspaceProxy) &&
+		nodePortAddresses.ContainsLoopback() {
+		proxier.localhostNodePortProxy = localnodeportproxy.NewLocalNodePortProxy(ipFamily, logger)
+	}
+
 	// initialize ipsetList with all sets we needed
 	proxier.ipsetList = make(map[string]*IPSet)
 	for _, is := range ipsetInfo {
@@ -1245,6 +1260,11 @@ func (proxier *Proxier) syncProxyRules() (retryError error) {
 
 	metrics.SyncProxyRulesNoLocalEndpointsTotal.WithLabelValues("internal", string(proxier.ipFamily)).Set(float64(proxier.serviceNoLocalEndpointsInternal.Len()))
 	metrics.SyncProxyRulesNoLocalEndpointsTotal.WithLabelValues("external", string(proxier.ipFamily)).Set(float64(proxier.serviceNoLocalEndpointsExternal.Len()))
+
+	if proxier.localhostNodePortProxy != nil {
+		proxier.localhostNodePortProxy.SyncNodePorts(
+			localnodeportproxy.BuildDesiredNodePorts(proxier.svcPortMap, proxier.endpointsMap, proxier.nodeName, proxier.topologyLabels))
+	}
 
 	if endpointUpdateResult.ConntrackCleanupRequired {
 		// Finish housekeeping, clear stale conntrack entries for UDP Services

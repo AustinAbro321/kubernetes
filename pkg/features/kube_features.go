@@ -583,6 +583,14 @@ const (
 	// Relies on UserNamespacesSupport feature, and thus should follow it when setting defaults.
 	LocalStorageCapacityIsolationFSQuotaMonitoring featuregate.Feature = "LocalStorageCapacityIsolationFSQuotaMonitoring"
 
+	// owner: @AustinAbro321
+	//
+	// Enables kube-proxy to run a userspace L4 proxy on the loopback address
+	// for NodePort services in configurations where kernel-space proxying
+	// cannot redirect loopback-sourced traffic (nftables mode, IPv6, IPVS,
+	// and IPv4 iptables without route_localnet).
+	LocalhostNodePortUserspaceProxy featuregate.Feature = "LocalhostNodePortUserspaceProxy"
+
 	// owner: @sanposhiho
 	// kep: https://kep.k8s.io/3633
 	//
@@ -1579,6 +1587,10 @@ var defaultVersionedKubernetesFeatureGates = map[featuregate.Feature]featuregate
 		{Version: version.MustParse("1.31"), Default: false, PreRelease: featuregate.Beta},
 	},
 
+	LocalhostNodePortUserspaceProxy: {
+		{Version: version.MustParse("1.36"), Default: false, PreRelease: featuregate.Alpha},
+	},
+
 	MatchLabelKeysInPodAffinity: {
 		{Version: version.MustParse("1.29"), Default: false, PreRelease: featuregate.Alpha},
 		{Version: version.MustParse("1.31"), Default: true, PreRelease: featuregate.Beta},
@@ -2409,6 +2421,8 @@ var defaultKubernetesFeatureGateDependencies = map[featuregate.Feature][]feature
 	KubeletTracing: {},
 
 	LocalStorageCapacityIsolationFSQuotaMonitoring: {},
+
+	LocalhostNodePortUserspaceProxy: {},
 
 	MatchLabelKeysInPodAffinity: {},
 
